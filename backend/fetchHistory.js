@@ -243,5 +243,246 @@ function msToDuration(ms) {
   return `${hrs}h ${remainingMin}m`;
 }
 
+router.get('/washing-history', authMiddleware, async (req, res) => {
+  try {
+    const { vehicleNumber, fromDate, toDate } = req.query;
+
+    const dateFilter = {};
+    if (fromDate) dateFilter.$gte = new Date(fromDate);
+    if (toDate) dateFilter.$lte = new Date(toDate);
+
+    const query = {
+      'washing.startTime': { $exists: true },
+    };
+    if (vehicleNumber) {
+      query.vehicleNumber = { $regex: vehicleNumber, $options: 'i' };
+    }
+
+    const vehicles = await Vehicle.find(query)
+      .populate('washing.performedBy', 'name')
+      .lean();
+
+    const formatDate = (date) =>
+      new Date(date).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+
+    const inProgress = [];
+    const completed = [];
+
+    for (const vehicle of vehicles) {
+      const washes = Array.isArray(vehicle.washing) ? vehicle.washing : [];
+
+      for (const wash of washes) {
+        if (!wash.startTime) continue;
+
+        // Apply date filter if provided
+        if ((fromDate || toDate) && wash.startTime) {
+          const washTime = new Date(wash.startTime);
+          if ((fromDate && washTime < new Date(fromDate)) || (toDate && washTime > new Date(toDate))) {
+            continue;
+          }
+        }
+
+        const base = {
+          vehicleNumber: vehicle.vehicleNumber,
+          startTime: formatDate(wash.startTime),
+          performedBy: wash.performedBy?.name || 'N/A',
+        };
+
+        if (wash.isCompleted && wash.endTime) {
+          completed.push({
+            ...base,
+            endTime: formatDate(wash.endTime),
+            durationMinutes: Math.round((new Date(wash.endTime) - new Date(wash.startTime)) / 60000),
+          });
+        } else {
+          inProgress.push(base);
+        }
+      }
+    }
+
+    res.status(200).json({ inProgress, completed });
+
+  } catch (error) {
+    console.error('Error fetching washing history:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/vehicle/pickup-drop-summary', authMiddleware, async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({
+      'pickupDrop.startTime': { $exists: true },
+      'securityGate.startTime': { $exists: true },
+      'securityGate.endTime': { $exists: true },
+      'driverDrop.endTime': { $exists: true }
+    }).lean();
+
+    const msToDuration = (ms) => {
+      const mins = Math.floor(ms / 60000);
+      const hrs = Math.floor(mins / 60);
+      const remainingMin = mins % 60;
+      return `${hrs}h ${remainingMin}m`;
+    };
+
+    const results = vehicles.map(v => {
+      const pickupStart = new Date(v.pickupDrop.startTime);
+      const pickupEnd = new Date(v.securityGate.startTime);
+      const dropStart = new Date(v.securityGate.endTime);
+      const dropEnd = new Date(v.driverDrop.endTime);
+
+      const pickupDurationMs = pickupEnd - pickupStart;
+      const dropDurationMs = dropEnd - dropStart;
+
+      return {
+        vehicleNumber: v.vehicleNumber,
+        pickupStart: pickupStart.toLocaleString(),
+        arrivalAtWorkshop: pickupEnd.toLocaleString(),
+        pickupDuration: msToDuration(pickupDurationMs),
+
+        workshopExit: dropStart.toLocaleString(),
+        dropComplete: dropEnd.toLocaleString(),
+        dropDuration: msToDuration(dropDurationMs)
+      };
+    });
+
+    res.status(200).json(results);
+  } catch (err) {
+    console.error('Error in pickup-drop summary:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// ✅ Driver-only history check (no need for securityGate)
+router.get('/vehicle/driver-history', authMiddleware, async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({
+      $or: [
+        { 'pickupDrop.startTime': { $exists: true } },
+        { 'driverDrop.endTime': { $exists: true } }
+      ]
+    }).lean();
+
+    const result = vehicles.map(v => {
+      return {
+        vehicleNumber: v.vehicleNumber,
+        pickupTime: v.pickupDrop?.startTime ? new Date(v.pickupDrop.startTime).toLocaleString() : null,
+        pickupKM: v.pickupDrop?.pickupKM || null,
+        dropTime: v.driverDrop?.endTime ? new Date(v.driverDrop.endTime).toLocaleString() : null,
+        dropKM: v.driverDrop?.dropKM || null // ✅ Include dropKM
+      };
+    });
+
+    res.status(200).json(result);
+  } catch (err) {
+    console.error('Error in driver-history route:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+router.get('/final-inspection-history', authMiddleware, async (req, res) => {
+  try {
+    const { vehicleNumber, fromDate, toDate, repairRequired } = req.query;
+
+    const query = {
+      'finalInspection.startTime': { $exists: true }
+    };
+
+    if (vehicleNumber) {
+      query.vehicleNumber = { $regex: vehicleNumber, $options: 'i' };
+    }
+
+    if (fromDate || toDate) {
+      query['finalInspection.startTime'] = {};
+      if (fromDate) query['finalInspection.startTime'].$gte = new Date(fromDate);
+      if (toDate) query['finalInspection.startTime'].$lte = new Date(toDate);
+    }
+
+    if (repairRequired !== undefined) {
+      query['finalInspection.repairRequired'] = repairRequired === 'true';
+    }
+
+    const vehicles = await Vehicle.find(query)
+      .populate('finalInspection.performedBy', 'name')
+      // .populate('finalInspection.endedBy', 'name')  // Removed this line
+      .lean();
+
+    const formatDate = (date) => {
+      if (!date) return 'N/A';
+      return new Date(date).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      });
+    };
+
+    const calculateDuration = (start, end) => {
+      if (!start || !end) return 'N/A';
+      return Math.round((new Date(end) - new Date(start)) / 60000);
+    };
+
+    const inProgress = [];
+    const completed = [];
+
+    for (const vehicle of vehicles) {
+      if (!vehicle.finalInspection) continue;
+
+      const baseInfo = {
+        vehicleNumber: vehicle.vehicleNumber,
+        startTime: formatDate(vehicle.finalInspection.startTime),
+        performedBy: vehicle.finalInspection.performedBy?.name || 'N/A',
+        repairRequired: vehicle.finalInspection.repairRequired ? 'Yes' : 'No',
+        remarks: vehicle.finalInspection.remarks || 'N/A'
+      };
+
+      if (vehicle.finalInspection.isCompleted && vehicle.finalInspection.endTime) {
+        completed.push({
+          ...baseInfo,
+          endTime: formatDate(vehicle.finalInspection.endTime),
+          // endedBy: vehicle.finalInspection.endedBy?.name || 'N/A',  // remove or comment out
+          durationMinutes: calculateDuration(
+            vehicle.finalInspection.startTime,
+            vehicle.finalInspection.endTime
+          )
+        });
+      } else {
+        inProgress.push(baseInfo);
+      }
+    }
+
+    res.status(200).json({
+      inProgress,
+      completed,
+      stats: {
+        totalInspections: completed.length + inProgress.length,
+        completed: completed.length,
+        inProgress: inProgress.length,
+        repairsRequired: completed.filter(i => i.repairRequired === 'Yes').length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching final inspection history:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+
+
+
+
 
 module.exports = router;

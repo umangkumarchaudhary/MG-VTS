@@ -48,18 +48,25 @@ const vehicleSchema = new Schema({
   // 4. Job Card Creation (Start Only)
   jobCardCreation: {
     startTime: Date,
-    performedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+    performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    isCompleted: { type: Boolean, default: false }
   },
 
   // 5. Bay Allocation (Start Only)
-  bayAllocation: {
-    startTime: Date,
-    performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    vehicleModel: String,
-    workType: String,
-    frt: String,
-    technicianName: String
-  },
+  bayAllocation: [{
+    startTime: { type: Date, required: true },
+    performedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  
+    vehicleModel: { type: String },        // Optional
+    serviceType: { type: String },         // Optional – no enum restriction
+    jobDescription: { type: String },      // Optional
+    itemDescription: { type: String },     // Optional
+    frtHours: { type: Number },            // Optional
+  
+    technicians: [{ type: Schema.Types.ObjectId, ref: 'User' }], // Optional
+    isFirstAllocation: { type: Boolean, default: false }
+  }],
+  
 
   // 6. Road Test
   roadTest: stageSchema,
@@ -100,7 +107,7 @@ const vehicleSchema = new Schema({
   additionalWork: {
     startTime: Date,
     performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    status: { type: String, enum: ['Approved', 'Not Approved'] }
+    isCompleted: { type: Boolean, default: false }
   },
 
   // 12. Parts Order (Start Only)
@@ -114,8 +121,13 @@ const vehicleSchema = new Schema({
   // 15. Final Inspection
   finalInspection: {
     ...stageSchema,
-    repairRequired: Boolean,
-    remarks: String
+    repairRequired: {
+      type: Boolean,
+      required: function () {
+        return this.finalInspection?.startTime != null || this.finalInspection?.endTime != null;
+      }
+    },
+    remarks: { type: String }
   },
 
   // 16. Job Card Received (Start Only)
@@ -127,11 +139,16 @@ const vehicleSchema = new Schema({
   // 17. Ready for Washing (Start Only)
   readyForWashing: {
     startTime: Date,
-    performedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+    performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    isCompleted: { type: Boolean, default: false }
   },
 
-  // 18. Washing
-  washing: stageSchema,
+  washing: [new Schema({
+    startTime: Date,
+    endTime: Date,
+    performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    isCompleted: { type: Boolean, default: false }
+  }, { _id: true })],
 
   // 19. VAS Activities
   vasActivities: stageSchema,
@@ -140,7 +157,8 @@ const vehicleSchema = new Schema({
   driverDrop: {
     endTime: Date,
     endedBy: { type: Schema.Types.ObjectId, ref: 'User' }, // 👈 drop driver
-    isCompleted: { type: Boolean, default: false }
+    isCompleted: { type: Boolean, default: false },
+    dropKM: Number
   },
 
   // Full history of all events

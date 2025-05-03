@@ -5,8 +5,14 @@ import 'dart:io';
 
 import 'package:workshop_tracking_app/screens/SecurityGuardDashboard.dart';
 import 'package:workshop_tracking_app/screens/TechnicianDashboard.dart';
+import 'package:workshop_tracking_app/screens/WashingDashboard.dart';
+import 'package:workshop_tracking_app/screens/DriverDashboard.dart';
+import 'package:workshop_tracking_app/screens/FinalInspectionDashboard.dart';
+import 'package:workshop_tracking_app/screens/ServiceAdvisorDashboard.dart';
+import 'package:workshop_tracking_app/screens/JobControllerDashboard.dart';
 
-const String baseUrl = 'http://192.168.9.77:5000/api';
+
+const String baseUrl = 'http://192.168.9.70:5000/api';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({Key? key}) : super(key: key);
@@ -37,7 +43,7 @@ class _AuthScreenState extends State<AuthScreen> {
     'Parts Team'
   ];
 
-  final List<String> teams = ['A', 'B', 'Default'];
+  final List<String> teams = ['A', 'B', 'None'];
 
   Future<void> submit() async {
   if (!_formKey.currentState!.validate()) return;
@@ -105,22 +111,22 @@ class _AuthScreenState extends State<AuthScreen> {
         page = TechnicianDashboard(token: token);
         break;
       case 'Service Advisor':
-        page = ServiceAdvisorDashboard();
+        page = ServiceAdvisorDashboard(token : token);
         break;
       case 'Quality Inspector':
-        page = QualityInspectorDashboard();
+        page = FinalInspectionDashboard(token: token);
         break;
       case 'Job Controller':
-        page = JobControllerDashboard();
+        page = JobControllerDashboard(token: token);
         break;
       case 'Washing':
-        page = WashingDashboard();
+        page = WashingDashboard(token: token);
         break;
       case 'Security Guard':
         page = SecurityGuardDashboard(token: token);
         break;
       case 'Driver':
-        page = DriverDashboard();
+        page = DriverDashboard(token: token);
         break;
       case 'Parts Team':
         page = PartsTeamDashboard();
@@ -237,30 +243,8 @@ class AdminDashboard extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Admin Dashboard')));
 }
 
-class ServiceAdvisorDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Service Advisor Dashboard')));
-}
 
-class QualityInspectorDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Quality Inspector Dashboard')));
-}
 
-class JobControllerDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Job Controller Dashboard')));
-}
-
-class WashingDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Washing Dashboard')));
-}
-
-class DriverDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Driver Dashboard')));
-}
 
 class PartsTeamDashboard extends StatelessWidget {
   @override

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Vehicle = require('./models/vehicleModel');
 const { authMiddleware } = require('./user/userAuth');
+const moment = require('moment-timezone');
 
 
 function createEvent(stage, eventType, userId, additionalData = {}) {
@@ -33,11 +34,13 @@ function closeOpenStages(vehicle, now) {
 // Unified vehicle check endpoint
 router.post('/vehicle-check', authMiddleware, async (req, res) => {
   try {
-    console.log('Request Body:', req.body);  // Debug: check the incoming request
+    console.log('Request Body:', req.body);
 
     const { vehicleNumber, stage, eventType, role, ...data } = req.body;
     const userId = req.user._id;
     const now = new Date();
+    const TEN_MINUTES = 10 * 60 * 1000; // 10 minutes in milliseconds
+
 
     console.log('Parsed data:', { vehicleNumber, stage, eventType, role, userId, now });
 
@@ -51,43 +54,36 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
     // Stage-specific logic
     switch (stage) {
       case 'pickupDrop':
-         console.log('Handling Pickup & Drop stage...');
-         if (eventType === 'Start') {
-         console.log('Start event for Pickup & Drop');
-         vehicle.pickupDrop = {
-        startTime: now,
-        performedBy: userId,
-        pickupKM: data.pickupKM
-    };
-  }
-  break;
+        console.log('Handling Pickup & Drop stage...');
+        if (eventType === 'Start') {
+          console.log('Start event for Pickup & Drop');
+          vehicle.pickupDrop = {
+            startTime: now,
+            performedBy: userId,
+            pickupKM: data.pickupKM
+          };
+        }
+        break;
 
-
-        case 'securityGate':
-          console.log('Handling Security Gate stage...');
-          if (eventType === 'Start') {
-            console.log('Start event for Security Gate');
-            vehicle.securityGate = { 
-              startTime: now, 
-              performedBy: userId, 
-              inKM: data.inKM 
-            };
-          } else if (eventType === 'End') {
-            console.log('End event for Security Gate');
-        
-            // Initialize if missing
-            if (!vehicle.securityGate) {
-              vehicle.securityGate = {};
-            }
-        
-            vehicle.securityGate.endTime = now;
-            vehicle.securityGate.performedBy = userId; // ensure this is set
-            vehicle.securityGate.outKM = data.outKM;
-            vehicle.securityGate.isCompleted = true;
-            closeOpenStages(vehicle, now);
-          }
-          break;
-        
+      case 'securityGate':
+        console.log('Handling Security Gate stage...');
+        if (eventType === 'Start') {
+          console.log('Start event for Security Gate');
+          vehicle.securityGate = { 
+            startTime: now, 
+            performedBy: userId, 
+            inKM: data.inKM 
+          };
+        } else if (eventType === 'End') {
+          console.log('End event for Security Gate');
+          if (!vehicle.securityGate) vehicle.securityGate = {};
+          vehicle.securityGate.endTime = now;
+          vehicle.securityGate.performedBy = userId;
+          vehicle.securityGate.outKM = data.outKM;
+          vehicle.securityGate.isCompleted = true;
+          closeOpenStages(vehicle, now);
+        }
+        break;
 
       case 'interactiveBay':
         console.log('Handling Interactive Bay stage...');
@@ -107,46 +103,164 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         break;
 
       case 'jobCardCreation':
-        console.log('Handling Job Card Creation stage...');
-        vehicle.jobCardCreation = { 
-          startTime: now, 
-          performedBy: userId 
+  console.log('Handling Job Card Creation stage...');
+  if (eventType === 'Start') {
+    // ✅ Check only if startTime exists
+    if (vehicle.jobCardCreation?.startTime) {
+      return res.status(400).json({
+        message: 'Job card creation has already been started for this vehicle'
+      });
+    }
+
+    console.log('Start event for Job Card Creation');
+    vehicle.jobCardCreation = {
+      startTime: now,
+      performedBy: userId,
+      isCompleted: false
+    };
+  }
+  break;
+
+
+  case 'additionalWork':
+    console.log('Handling Additional Work Approval stage...');
+    if (eventType === 'Start') {
+      const lastStart = vehicle.additionalWork?.startTime;
+      const canRestart = !lastStart || (now - new Date(lastStart)) > TEN_MINUTES;
+  
+      if (!canRestart) {
+        return res.status(400).json({
+          message: 'You must wait 10 minutes before restarting Additional Work Approval.'
+        });
+      }
+  
+      console.log('Start event for Additional Work Approval');
+      vehicle.additionalWork = {
+        startTime: now,
+        performedBy: userId,
+        isCompleted: false
+      };
+    }
+    break;
+  
+
+    case 'readyForWashing':
+      console.log('Handling Ready for Washing stage...');
+      if (eventType === 'Start') {
+        const lastStart = vehicle.readyForWashing?.startTime;
+        const canRestart = !lastStart || (now - new Date(lastStart)) > TEN_MINUTES;
+    
+        if (!canRestart) {
+          return res.status(400).json({
+            message: 'You must wait 10 minutes before restarting Ready for Washing.'
+          });
+        }
+    
+        console.log('Start event for Ready for Washing');
+        vehicle.readyForWashing = {
+          startTime: now,
+          performedBy: userId,
+          isCompleted: false
         };
-        break;
+      }
+      break;
 
       case 'bayAllocation':
         console.log('Handling Bay Allocation stage...');
-        vehicle.bayAllocation = { 
-          startTime: now, 
-          performedBy: userId, 
-          vehicleModel: data.vehicleModel, 
-          workType: data.workType,
-          technicianName: data.technicianName,
-          frt: data.frt
+        
+        if (!vehicle.jobCardCreation?.startTime) {
+          return res.status(400).json({
+            message: 'Job card must be created before bay allocation'
+          });
+        }
+      
+        // Ensure userId is available (from auth middleware)
+        if (!userId) {
+          return res.status(400).json({ message: 'User authentication required' });
+        }
+      
+        const existingAllocations = vehicle.bayAllocation || [];
+        const isFirstAllocation = existingAllocations.length === 0;
+      
+        // Create new allocation with required fields
+        const newAllocation = {
+          startTime: new Date(),  // Explicitly set current time
+          performedBy: userId,    // From authenticated user
+          vehicleModel: data.vehicleModel,
+          serviceType: data.serviceType,
+          jobDescription: data.jobDescription,
+          itemDescription: data.itemDescription,
+          frtHours: data.frtHours,
+          technicians: data.technicians || [], // Default empty array
+          isFirstAllocation: isFirstAllocation
         };
-
-        const existingAllocations = vehicle.bayAllocations || [];
-        if (existingAllocations.length === 0) {
-          console.log('First Bay Allocation, closing Job Card Creation and Customer Approval if not already closed');
-          if (vehicle.jobCardCreation && !vehicle.jobCardCreation.endTime) {
-            vehicle.jobCardCreation.endTime = now;
+      
+        // Validate required fields
+        if (!newAllocation.startTime || !newAllocation.performedBy) {
+          console.error('Missing required fields:', {
+            startTime: newAllocation.startTime,
+            performedBy: newAllocation.performedBy
+          });
+          return res.status(400).json({ 
+            message: 'Required fields missing for bay allocation' 
+          });
+        }
+      
+        // Update related stages
+        if (isFirstAllocation) {
+          if (vehicle.jobCardCreation && !vehicle.jobCardCreation.isCompleted) {
+            vehicle.jobCardCreation.endTime = new Date();
             vehicle.jobCardCreation.isCompleted = true;
           }
-          if (vehicle.customerApproval && !vehicle.customerApproval.endTime) {
-            vehicle.customerApproval.endTime = now;
-            vehicle.customerApproval.isCompleted = true;
-          }
         } else {
-          console.log('Subsequent Bay Allocation, closing Additional Work if not already closed');
-          if (vehicle.additionalWork && !vehicle.additionalWork.endTime) {
-            vehicle.additionalWork.endTime = now;
+          if (vehicle.additionalWork && !vehicle.additionalWork.isCompleted) {
+            vehicle.additionalWork.endTime = new Date();
             vehicle.additionalWork.isCompleted = true;
           }
         }
-
-        // Save allocation history (if you support multiple)
-        vehicle.bayAllocations = [...existingAllocations, vehicle.bayAllocation];
+      
+        // Add to bayAllocation array
+        vehicle.bayAllocation = [...existingAllocations, newAllocation];
         break;
+      
+
+
+      case 'assignExpert':
+      console.log('Handling Assign Expert stage...');
+      if (eventType === 'Start') {
+
+    console.log('Start event for Assign Expert');
+    vehicle.assignExpert = {
+      startTime: now,
+      performedBy: userId,
+      expertName: data.expertName,
+      isCompleted: false
+    };
+  }
+  break;
+
+case 'jobCardReceived':
+  console.log('Handling Job Card Received stage...');
+  if (eventType === 'Start') {
+
+    console.log('Start event for Job Card Received');
+    vehicle.jobCardReceived = {
+      startTime: now,
+      performedBy: userId,
+      isCompleted: false
+    };
+    
+    // Auto-close if washing starts
+  } else if (eventType === 'End') {
+    console.log('End event for Job Card Received');
+    if (!vehicle.jobCardReceived) vehicle.jobCardReceived = {};
+    vehicle.jobCardReceived.endTime = now;
+    vehicle.jobCardReceived.isCompleted = true;
+  }
+  break;
+    
+
+      
 
       case 'roadTest':
         console.log('Handling Road Test stage...');
@@ -196,21 +310,7 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         };
         break;
 
-      case 'expertStage':
-        console.log('Handling Expert Stage...');
-        if (eventType === 'Start') {
-          console.log('Start event for Expert Stage');
-          vehicle.expertStage = { 
-            startTime: now, 
-            performedBy: userId 
-          };
-        } else if (eventType === 'End') {
-          console.log('End event for Expert Stage');
-          vehicle.expertStage.endTime = now;
-          vehicle.expertStage.endedBy = userId;
-          vehicle.expertStage.isCompleted = true;
-        }
-        break;
+      
 
       case 'partsEstimation':
         console.log('Handling Parts Estimation stage...');
@@ -224,18 +324,6 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
           console.log('End event for Parts Estimation');
           vehicle.partsEstimation.endTime = now;
           vehicle.partsEstimation.isCompleted = true;
-        }
-        break;
-
-      case 'additionalWork':
-        console.log('Handling Additional Work stage...');
-        if (eventType === 'Start') {
-          console.log('Start event for Additional Work');
-          vehicle.additionalWork = { 
-            startTime: now, 
-            performedBy: userId,
-            status: data.status
-          };
         }
         break;
 
@@ -258,45 +346,56 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
           console.log('Start event for Final Inspection');
           vehicle.finalInspection = { 
             startTime: now, 
-            performedBy: userId 
+            performedBy: userId,
+            repairRequired: false,
+            isCompleted: false
           };
         } else if (eventType === 'End') {
           console.log('End event for Final Inspection');
+          if (typeof data.repairRequired !== 'boolean') {
+            return res.status(400).json({ 
+              error: 'repairRequired is required and must be a boolean (true or false)' 
+            });
+          }
+          if (!vehicle.finalInspection) vehicle.finalInspection = {};
           vehicle.finalInspection.endTime = now;
           vehicle.finalInspection.isCompleted = true;
           vehicle.finalInspection.repairRequired = data.repairRequired;
-          vehicle.finalInspection.remarks = data.remarks;
+          if (data.remarks !== undefined) {
+            vehicle.finalInspection.remarks = data.remarks;
+          }
         }
-        break;
-
-      case 'jobCardReceived':
-        console.log('Handling Job Card Received stage...');
-        vehicle.jobCardReceived = { 
-          startTime: now, 
-          performedBy: userId 
-        };
-        break;
-
-      case 'readyForWashing':
-        console.log('Handling Ready for Washing stage...');
-        vehicle.readyForWashing = { 
-          startTime: now, 
-          performedBy: userId 
-        };
         break;
 
       case 'washing':
         console.log('Handling Washing stage...');
+        if (!Array.isArray(vehicle.washing)) vehicle.washing = [];
+        const lastWash = vehicle.washing[vehicle.washing.length - 1];
+
         if (eventType === 'Start') {
           console.log('Start event for Washing');
-          vehicle.washing = { 
-            startTime: now, 
-            performedBy: userId 
-          };
+          // Close readyForWashing if open
+          if (vehicle.readyForWashing && !vehicle.readyForWashing.isCompleted) {
+            vehicle.readyForWashing.endTime = now;
+            vehicle.readyForWashing.isCompleted = true;
+          }
+          if (lastWash && !lastWash.isCompleted) {
+            return res.status(400).json({
+              message: 'Cannot start new washing session while previous one is in progress'
+            });
+          }
+          vehicle.washing.push({
+            startTime: now,
+            performedBy: userId,
+            isCompleted: false
+          });
         } else if (eventType === 'End') {
           console.log('End event for Washing');
-          vehicle.washing.endTime = now;
-          vehicle.washing.isCompleted = true;
+          if (!lastWash) {
+            return res.status(400).json({ message: 'No washing session has been started yet' });
+          }
+          lastWash.endTime = now;
+          lastWash.isCompleted = true;
         }
         break;
 
@@ -315,20 +414,17 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         }
         break;
 
-        case 'driverDrop':
-          console.log('Handling Driver Drop stage...');
-          if (eventType === 'End') {
-            console.log('End event for Driver Drop');
-            
-            // Initialize if null
-            if (!vehicle.driverDrop) vehicle.driverDrop = {};
-        
-            vehicle.driverDrop.endTime = now;
-            vehicle.driverDrop.endedBy = userId; // ✅ store dropping driver
-            vehicle.driverDrop.isCompleted = true;
-          }
-          break;
-        
+      case 'driverDrop':
+        console.log('Handling Driver Drop stage...');
+        if (eventType === 'End') {
+          console.log('End event for Driver Drop');
+          if (!vehicle.driverDrop) vehicle.driverDrop = {};
+          vehicle.driverDrop.endTime = now;
+          vehicle.driverDrop.endedBy = userId;
+          vehicle.driverDrop.isCompleted = true;
+          vehicle.driverDrop.dropKM = data.dropKM;
+        }
+        break;
 
       default:
         console.log('Invalid stage encountered:', stage);
@@ -362,6 +458,108 @@ router.get("/vehicles", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error", error });
   }
 });
+
+router.get('/vehicles/:vehicleNumber/full-journey', async (req, res) => {
+  try {
+    const { vehicleNumber } = req.params;
+
+    const vehicle = await Vehicle.findOne({ vehicleNumber })
+      .populate([
+        { path: 'pickupDrop.performedBy', select: 'name role' },
+        { path: 'securityGate.performedBy', select: 'name role' },
+        { path: 'interactiveBay.performedBy interactiveBay.endedBy', select: 'name role' },
+        { path: 'jobCardCreation.performedBy', select: 'name role' },
+        { path: 'bayAllocation.performedBy', select: 'name role' },
+        { path: 'roadTest.performedBy', select: 'name role' },
+        { path: 'bayWork.performedBy bayWork.endedBy', select: 'name role' },
+        { path: 'assignExpert.performedBy', select: 'name role' },
+        { path: 'expertStage.performedBy expertStage.endedBy', select: 'name role' },
+        { path: 'partsEstimation.performedBy', select: 'name role' },
+        { path: 'additionalWork.performedBy', select: 'name role' },
+        { path: 'partsOrder.performedBy', select: 'name role' },
+        { path: 'finalInspection.performedBy', select: 'name role' },
+        { path: 'jobCardReceived.performedBy', select: 'name role' },
+        { path: 'readyForWashing.performedBy', select: 'name role' },
+        { path: 'driverDrop.endedBy', select: 'name role' },
+        { path: 'washing.performedBy', select: 'name role' },
+        { path: 'vasActivities.performedBy', select: 'name role' },
+        { path: 'history.performedBy', select: 'name role' }
+      ]);
+
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    const latestEvents = {};
+    for (const event of vehicle.history || []) {
+      const { stage, eventType, timestamp } = event;
+      if (!latestEvents[stage] || new Date(timestamp) > new Date(latestEvents[stage].timestamp)) {
+        latestEvents[stage] = {
+          eventType,
+          timestamp
+        };
+      }
+    }
+
+    const stageOrder = [
+      'pickupDrop', 'securityGate', 'interactiveBay', 'jobCardCreation', 'bayAllocation',
+      'roadTest', 'bayWork', 'assignExpert', 'expertStage', 'partsEstimation',
+      'additionalWork', 'partsOrder', 'finalInspection', 'jobCardReceived',
+      'readyForWashing', 'washing', 'vasActivities', 'driverDrop'
+    ];
+
+    const journey = [];
+
+    for (const stage of stageOrder) {
+      const value = vehicle[stage];
+      if (!value) continue;
+
+      const hasActivity = Array.isArray(value)
+        ? value.some(session => session.startTime || session.performedBy)
+        : value.startTime || value.performedBy || value.endedBy;
+
+      if (!hasActivity) continue;
+
+      const eventInfo = latestEvents[stage];
+      const label = eventInfo ? `${stage} (${eventInfo.eventType})` : stage;
+
+      const sortTime = eventInfo?.timestamp ||
+        (Array.isArray(value)
+          ? value[value.length - 1]?.startTime
+          : value.startTime) || new Date(0);
+
+      const formattedTime = moment(sortTime).tz('Asia/Kolkata').format('DD-MM-YYYY hh:mm A');
+
+      journey.push({
+        label,
+        data: value,
+        time: sortTime,
+        formattedTime
+      });
+    }
+
+    // Sort by most recent activity
+    journey.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+    const formatted = {};
+    for (const item of journey) {
+      formatted[item.label] = {
+        ...item.data,
+        formattedActivityTime: item.formattedTime
+      };
+    }
+
+    res.json({
+      vehicleNumber: vehicle.vehicleNumber,
+      journey: formatted
+    });
+  } catch (error) {
+    console.error('Error fetching vehicle journey:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
 
 
 

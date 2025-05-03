@@ -146,6 +146,25 @@ router.get('/me', authMiddleware, async (req, res) => {
     res.json(user);
 });
 
+
+// ===== Get All Technicians with Team Info =====
+router.get('/technicians', authMiddleware, async (req, res) => {
+    try {
+        const technicians = await User.find({ role: 'Technician' }).select('_id name team');
+        
+        const formattedTechs = technicians.map(tech => ({
+            _id: tech._id,
+            name: `${tech.name} (${tech.team})`
+        }));
+
+        res.json(formattedTechs);
+    } catch (error) {
+        console.error('Error fetching technicians:', error);
+        res.status(500).json({ message: 'Failed to fetch technicians' });
+    }
+});
+
+
 // ===== Final Exports =====
 module.exports = {
     authMiddleware,
