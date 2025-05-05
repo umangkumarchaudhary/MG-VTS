@@ -480,7 +480,220 @@ router.get('/final-inspection-history', authMiddleware, async (req, res) => {
 });
 
 
+router.get('/vehicle/:vehicleNumber/parts-estimation-history', async (req, res) => {
+  try {
+    const { vehicleNumber } = req.params;
 
+    const vehicle = await Vehicle.findOne({ vehicleNumber })
+      .populate('partsEstimation.performedBy', 'name role')
+      .populate('history.performedBy', 'name role');
+
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    const partsEstimationHistory = vehicle.history.filter(h => h.stage === 'partsEstimation');
+
+    res.json({
+      vehicleNumber: vehicle.vehicleNumber,
+      currentStatus: vehicle.partsEstimation || null,
+      history: partsEstimationHistory
+    });
+
+  } catch (error) {
+    console.error('Error fetching parts estimation history:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+router.get('/vehicle/:vehicleNumber/parts-order-history', async (req, res) => {
+  try {
+    const { vehicleNumber } = req.params;
+
+    const vehicle = await Vehicle.findOne({ vehicleNumber })
+      .populate('partsOrder.performedBy', 'name role');
+
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    const partsOrderData = vehicle.partsOrder;
+
+    res.json({
+      vehicleNumber: vehicle.vehicleNumber,
+      currentStatus: partsOrderData || null,
+      history: partsOrderData ? [partsOrderData] : []
+    });
+
+  } catch (error) {
+    console.error('Error fetching parts order history:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+router.get('/dashboard/status', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find().sort({ updatedAt: -1 });
+
+    const statusMap = vehicles.map(vehicle => {
+      return {
+        vehicleNumber: vehicle.vehicleNumber,
+        status: determineVehicleStatus(vehicle),
+        lastUpdated: vehicle.updatedAt,
+        currentStage: getCurrentActiveStage(vehicle),
+        timeline: generateTimeline(vehicle) // Optional: for displaying stage timeline
+      };
+    });
+
+    res.status(200).json({ success: true, vehicles: statusMap });
+  } catch (error) {
+    console.error('Error in dashboard status:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Enhanced status determination logic
+function determineVehicleStatus(vehicle) {
+  // 11. Check if washing ended but security not ended
+  if (hasWashingEnded(vehicle) && 
+      vehicle.securityGate?.startTime && 
+      !vehicle.securityGate?.endTime) {
+    return "Waiting for dispatch";
+  }
+
+  // 12. Security ended but no driver drop
+  if (vehicle.securityGate?.endTime && 
+      (!vehicle.driverDrop || !vehicle.driverDrop.endTime)) {
+    return "Car has been sent to customer";
+  }
+
+  // 13. Driver drop completed
+  if (vehicle.driverDrop?.endTime) {
+    return "Delivered to customer";
+  }
+
+  // Original status checks (1-10)
+  // 1. Driver pickup check
+  if (vehicle.pickupDrop?.startTime && !vehicle.securityGate?.startTime) {
+    return "Vehicle about to arrive (driver picked up)";
+  }
+
+  // 2. Security gate to job card creation
+  if (vehicle.securityGate?.startTime && !vehicle.jobCardCreation?.startTime) {
+    return "Waiting for customer approval";
+  }
+
+  // 3. Job card created but no bay allocation
+  if (vehicle.jobCardCreation?.startTime && 
+      (!vehicle.bayAllocation || vehicle.bayAllocation.length === 0)) {
+    return "Waiting for allocation";
+  }
+
+  // 4. Bay allocated but work not started
+  if ((vehicle.bayAllocation?.length > 0) && 
+      !vehicle.bayWork?.startTime) {
+    return "Waiting for work to start";
+  }
+
+  // 5. Bay work in progress
+  if (vehicle.bayWork?.startTime && !vehicle.bayWork?.endTime) {
+    return "Work in progress";
+  }
+
+  // 6. Expert stage
+  if (vehicle.expertStage?.startTime && !vehicle.expertStage?.endTime) {
+    return "Under expert inspection";
+  }
+
+  // 7. Final inspection
+  if (vehicle.finalInspection?.startTime && !vehicle.finalInspection?.endTime) {
+    return "Final inspection";
+  }
+
+  // 8. Washing in progress
+  if (isWashingInProgress(vehicle)) {
+    return "In washing";
+  }
+
+  // 9. Ready for washing but not started
+  if (vehicle.readyForWashing?.startTime && 
+      !isWashingInProgress(vehicle)) {
+    return "Waiting for washing";
+  }
+
+  // 10. Job card received
+  if (vehicle.jobCardReceived?.startTime) {
+    return "Completion of work (waiting for FI)";
+  }
+
+  return "Status unknown - check vehicle details";
+}
+
+// Helper functions
+function hasWashingEnded(vehicle) {
+  if (!vehicle.washing || vehicle.washing.length === 0) return false;
+  const lastWash = vehicle.washing[vehicle.washing.length - 1];
+  return lastWash.endTime !== undefined;
+}
+
+function isWashingInProgress(vehicle) {
+  if (!vehicle.washing || vehicle.washing.length === 0) return false;
+  const lastWash = vehicle.washing[vehicle.washing.length - 1];
+  return lastWash.startTime && !lastWash.endTime;
+}
+
+function getCurrentActiveStage(vehicle) {
+  const stages = [
+    'driverDrop', 'securityGate', 'pickupDrop', 'jobCardCreation',
+    'bayAllocation', 'bayWork', 'expertStage', 'finalInspection',
+    'washing', 'readyForWashing', 'jobCardReceived'
+  ];
+
+  for (const stage of stages) {
+    if (stage === 'bayAllocation' && vehicle.bayAllocation?.length > 0) {
+      return stage;
+    }
+    if (stage === 'washing' && isWashingInProgress(vehicle)) {
+      return stage;
+    }
+    if (vehicle[stage]?.startTime && !vehicle[stage]?.endTime) {
+      return stage;
+    }
+  }
+  return 'unknown';
+}
+
+// Optional: Generate a timeline of completed stages
+function generateTimeline(vehicle) {
+  const timeline = [];
+  const stages = [
+    'pickupDrop', 'securityGate', 'jobCardCreation', 'bayAllocation',
+    'bayWork', 'expertStage', 'finalInspection', 'washing',
+    'jobCardReceived', 'driverDrop'
+  ];
+
+  stages.forEach(stage => {
+    if (stage === 'bayAllocation' && vehicle.bayAllocation?.length > 0) {
+      timeline.push({
+        stage,
+        startTime: vehicle.bayAllocation[0].startTime,
+        status: 'completed'
+      });
+    } else if (vehicle[stage]?.startTime) {
+      timeline.push({
+        stage,
+        startTime: vehicle[stage].startTime,
+        endTime: vehicle[stage].endTime || null,
+        status: vehicle[stage].endTime ? 'completed' : 'in-progress'
+      });
+    }
+  });
+
+  return timeline.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+}
 
 
 

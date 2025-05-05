@@ -300,18 +300,7 @@ case 'jobCardReceived':
           vehicle.bayWork.isCompleted = true;
         }
         break;
-
-      case 'assignExpert':
-        console.log('Handling Assign Expert stage...');
-        vehicle.assignExpert = { 
-          startTime: now, 
-          performedBy: userId,
-          expertName: data.expertName
-        };
-        break;
-
-      
-
+        
       case 'partsEstimation':
         console.log('Handling Parts Estimation stage...');
         if (eventType === 'Start') {

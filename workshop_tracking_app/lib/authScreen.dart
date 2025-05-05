@@ -10,9 +10,12 @@ import 'package:workshop_tracking_app/screens/DriverDashboard.dart';
 import 'package:workshop_tracking_app/screens/FinalInspectionDashboard.dart';
 import 'package:workshop_tracking_app/screens/ServiceAdvisorDashboard.dart';
 import 'package:workshop_tracking_app/screens/JobControllerDashboard.dart';
+import 'package:workshop_tracking_app/screens/PartsTeamDashboard.dart';
+import 'package:workshop_tracking_app/screens/AdminDashboard.dart';
 
 
-const String baseUrl = 'http://192.168.9.70:5000/api';
+
+const String baseUrl = 'http://192.168.0.103:5000/api';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({Key? key}) : super(key: key);
@@ -105,7 +108,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
     switch (role) {
       case 'Admin':
-        page = AdminDashboard();
+        page = AdminDashboard(token: token);
         break;
       case 'Technician':
         page = TechnicianDashboard(token: token);
@@ -129,7 +132,7 @@ class _AuthScreenState extends State<AuthScreen> {
         page = DriverDashboard(token: token);
         break;
       case 'Parts Team':
-        page = PartsTeamDashboard();
+        page = PartsTeamDashboard(token:token);
         break;
       default:
         page = Scaffold(body: Center(child: Text('Unknown Role')));
@@ -236,17 +239,4 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-// Dummy dashboards
 
-class AdminDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Admin Dashboard')));
-}
-
-
-
-
-class PartsTeamDashboard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: Text('Parts Team Dashboard')));
-}
