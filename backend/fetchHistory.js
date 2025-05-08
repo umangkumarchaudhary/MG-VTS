@@ -6,69 +6,82 @@ const { User } = require('./user/userAuth');
 
 
 router.get('/security-gate-history', authMiddleware, async (req, res) => {
-    try {
-      const { vehicleNumber, fromDate, toDate } = req.query;
-  
-      // Build query object
-      let query = {
-        'securityGate.startTime': { $exists: true } // Only vehicles with IN recorded
-      };
-  
-      if (vehicleNumber) {
-        // Case-insensitive partial match
-        query.vehicleNumber = { $regex: vehicleNumber, $options: 'i' };
-      }
-  
-      if (fromDate || toDate) {
-        query['securityGate.startTime'] = {};
-        if (fromDate) {
-          query['securityGate.startTime'].$gte = new Date(fromDate);
-        }
-        if (toDate) {
-          query['securityGate.startTime'].$lte = new Date(toDate);
-        }
-      }
-  
-      // Fetch vehicles matching criteria
-      const vehicles = await Vehicle.find(query).lean();
-  
-      // Separate IN and OUT vehicles
-      const inVehicles = [];
-      const outVehicles = [];
-  
-      vehicles.forEach(vehicle => {
-        const sg = vehicle.securityGate;
-        if (sg) {
-          if (sg.isCompleted && sg.endTime && sg.outKM !== undefined) {
-            // Vehicle has exited (OUT)
-            outVehicles.push({
-              vehicleNumber: vehicle.vehicleNumber,
-              inKM: sg.inKM,
-              outKM: sg.outKM,
-              inTime: sg.startTime,
-              outTime: sg.endTime
-            });
-          } else {
-            // Vehicle is still IN
-            inVehicles.push({
-              vehicleNumber: vehicle.vehicleNumber,
-              inKM: sg.inKM,
-              inTime: sg.startTime
-            });
-          }
-        }
-      });
-  
-      res.status(200).json({
-        inVehicles,
-        outVehicles
-      });
-  
-    } catch (error) {
-      console.error('Error fetching security gate history:', error);
-      res.status(500).json({ error: 'Internal server error' });
+  try {
+    const { vehicleNumber, fromDate, toDate } = req.query;
+
+    // Build query object
+    let query = {
+      'securityGate.startTime': { $exists: true } // Only vehicles with IN recorded
+    };
+
+    if (vehicleNumber) {
+      query.vehicleNumber = { $regex: vehicleNumber, $options: 'i' }; // Case-insensitive
     }
-  });
+
+    if (fromDate || toDate) {
+      query['securityGate.startTime'] = {};
+      if (fromDate) query['securityGate.startTime'].$gte = new Date(fromDate);
+      if (toDate) query['securityGate.startTime'].$lte = new Date(toDate);
+    }
+
+    const vehicles = await Vehicle.find(query).lean();
+
+    const inVehicles = [];
+    const outVehicles = [];
+
+    // Format date to Indian format with 12-hour clock and AM/PM
+    const formatToIST = (date) => {
+      return new Date(date).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+    };
+
+    vehicles.forEach(vehicle => {
+      const sg = vehicle.securityGate;
+      if (sg) {
+        if (sg.isCompleted && sg.endTime && sg.outKM !== undefined) {
+          // OUT vehicles
+          outVehicles.push({
+            vehicleNumber: vehicle.vehicleNumber,
+            inKM: sg.inKM,
+            outKM: sg.outKM,
+            inTime: formatToIST(sg.startTime),
+            outTime: formatToIST(sg.endTime),
+            bringBy: sg.bringBy || '',
+            customerName: sg.customerName || '',
+            takeOutBy: sg.takeOutBy || '',
+            customerNameOut: sg.customerNameOut || ''
+          });
+        } else {
+          // IN vehicles
+          inVehicles.push({
+            vehicleNumber: vehicle.vehicleNumber,
+            inKM: sg.inKM,
+            inTime: formatToIST(sg.startTime),
+            bringBy: sg.bringBy || '',
+            customerName: sg.customerName || ''
+          });
+        }
+      }
+    });
+
+    res.status(200).json({
+      inVehicles,
+      outVehicles
+    });
+
+  } catch (error) {
+    console.error('Error fetching security gate history:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
   
   router.get('/vehicle-progress/interactiveBay', authMiddleware, async (req, res) => {
   try {
@@ -694,6 +707,90 @@ function generateTimeline(vehicle) {
 
   return timeline.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 }
+
+
+router.get('/job-card-listings', authMiddleware, async (req, res) => {
+  try {
+    const { date } = req.query; // Optional query param for filtering by date
+    let startOfDay, endOfDay;
+
+    if (date) {
+      const selectedDate = new Date(date);
+      startOfDay = new Date(selectedDate.setHours(0, 0, 0, 0));
+      endOfDay = new Date(selectedDate.setHours(23, 59, 59, 999));
+    }
+
+    const filter = {
+      'jobCardCreation.startTime': { $exists: true }
+    };
+
+    if (date) {
+      filter['jobCardCreation.startTime'] = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    const vehicles = await Vehicle.find(filter)
+      .populate('jobCardCreation.performedBy', 'name role')
+      .select('vehicleNumber jobCardCreation');
+
+    const results = vehicles.map(v => {
+      const jc = v.jobCardCreation;
+      return {
+        vehicleNumber: v.vehicleNumber,
+        concern: jc.concern || '',
+        addedBy: jc.performedBy?.name || 'Unknown',
+        role: jc.performedBy?.role || 'Unknown',
+        addedAtIST: new Date(jc.addedAt || jc.startTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        status: jc.isCompleted ? 'Completed' : 'Waiting for Customer Approval'
+      };
+    });
+
+    res.status(200).json(results);
+  } catch (err) {
+    console.error('Error fetching job card listings:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+// GET /api/work-in-progress
+router.get('/work-in-progress', async (req, res) => {
+  try {
+    const search = req.query.search || '';
+
+    const query = {
+      'bayWork.isCompleted': false,
+      vehicleNumber: { $regex: search, $options: 'i' }
+    };
+
+    const vehicles = await Vehicle.find(query)
+      .sort({ 'bayWork.startTime': -1 }) // Newest first
+      .select('vehicleNumber bayWork')   // Only needed fields
+      .populate('bayWork.performedBy', 'name') // Optional: show technician name
+
+    const formatted = vehicles.map(v => {
+      const bw = v.bayWork || {};
+      const istStart = bw.startTime ? new Date(bw.startTime).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '-';
+
+      return {
+        vehicleNumber: v.vehicleNumber,
+        bayNumber: bw.bayNumber || '-',
+        workType: bw.workType || '-',
+        startTimeIST: istStart,
+        status: (bw.additionalWorkLogs && bw.additionalWorkLogs.length > 0) ? 'Additional work needed' : 'In Progress',
+        additionalWorkLogs: bw.additionalWorkLogs || []
+      };
+    });
+
+    res.json(formatted);
+  } catch (err) {
+    console.error('Error fetching work-in-progress:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+
 
 
 

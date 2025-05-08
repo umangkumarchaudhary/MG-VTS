@@ -5,7 +5,13 @@ import 'dart:convert';
 
 class JobControllerDashboard extends StatefulWidget {
   final String token;
-  const JobControllerDashboard({Key? key, required this.token}) : super(key: key);
+  final VoidCallback onLogout;
+
+  const JobControllerDashboard({
+    Key? key, 
+    required this.token,
+    required this.onLogout,
+  }) : super(key: key);
 
   @override
   _JobControllerDashboardState createState() => _JobControllerDashboardState();
@@ -48,7 +54,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
   Future<void> fetchTechnicians() async {
     try {
       final response = await http.get(
-        Uri.parse('http://192.168.9.70:5000/api/technicians'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/technicians'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
       
@@ -68,7 +74,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
   Future<void> fetchExperts() async {
     try {
       final response = await http.get(
-        Uri.parse('http://192.168.9.70:5000/api/technicians'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/technicians'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
       
@@ -103,7 +109,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
     setState(() => isLoading = true);
     try {
       final response = await http.get(
-        Uri.parse('http://192.168.9.70:5000/api/vehicles/$vehicleNumber'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicles'),
         headers: {'Authorization': 'Bearer ${widget.token}'},
       );
       
@@ -136,7 +142,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
     setState(() => isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse('http://192.168.9.70:5000/api/vehicle-check'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle-check'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',
@@ -190,7 +196,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
     setState(() => isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse('http://192.168.9.70:5000/api/vehicle-check'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle-check'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',
@@ -238,7 +244,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
     setState(() => isLoading = true);
     try {
       final response = await http.post(
-        Uri.parse('http://192.168.9.70:5000/api/vehicle-check'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle-check'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.token}',
@@ -270,15 +276,45 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
     }
   }
 
+  void _handleLogout() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onLogout();
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Job Controller Dashboard'),
+        title: const Text('Job Controller Dashboard', style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.black,
         actions: [
           IconButton(
-            icon: const Icon(Icons.qr_code_scanner),
+            icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
             onPressed: scanQRCode,
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
           ),
         ],
       ),
@@ -287,6 +323,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
         child: Column(
           children: [
             Card(
+              color: Colors.grey[900],
               child: ListTile(
                 title: Text(
                   vehicleNumber ?? 'No vehicle scanned',
@@ -297,10 +334,10 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                   ),
                 ),
                 trailing: IconButton(
-                  icon: const Icon(Icons.qr_code_scanner),
+                  icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
                   onPressed: scanQRCode,
                 ),
-                subtitle: hasScanned ? null : const Text('Scan vehicle QR to begin'),
+                subtitle: hasScanned ? null : const Text('Scan vehicle QR to begin', style: TextStyle(color: Colors.grey)),
               ),
             ),
             const SizedBox(height: 20),
@@ -339,57 +376,66 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                         child: Column(
                           children: [
                             TextFormField(
-                              decoration: const InputDecoration(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
                                 labelText: 'Vehicle Model',
-                                border: OutlineInputBorder(),
+                                labelStyle: const TextStyle(color: Colors.white),
+                                border: const OutlineInputBorder(),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                               ),
-                              validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
                               onChanged: (value) => vehicleModel = value,
                             ),
                             const SizedBox(height: 16),
                             DropdownButtonFormField<String>(
-                              decoration: const InputDecoration(
+                              style: const TextStyle(color: Colors.white),
+                              dropdownColor: Colors.grey[900],
+                              decoration: InputDecoration(
                                 labelText: 'Service Type',
-                                border: OutlineInputBorder(),
+                                labelStyle: const TextStyle(color: Colors.white),
+                                border: const OutlineInputBorder(),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                               ),
                               items: serviceTypes.map((type) => DropdownMenuItem(
                                 value: type,
-                                child: Text(type),
+                                child: Text(type, style: const TextStyle(color: Colors.white)),
                               )).toList(),
                               onChanged: (value) => serviceType = value,
-                              validator: (value) => value == null ? 'Required' : null,
                             ),
                             const SizedBox(height: 16),
                             TextFormField(
-                              decoration: const InputDecoration(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
                                 labelText: 'Job Description',
-                                border: OutlineInputBorder(),
+                                labelStyle: const TextStyle(color: Colors.white),
+                                border: const OutlineInputBorder(),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                               ),
-                              validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
+                              
                               onChanged: (value) => jobDescription = value,
                               maxLines: 2,
                             ),
                             const SizedBox(height: 16),
                             TextFormField(
-                              decoration: const InputDecoration(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
                                 labelText: 'Item Description',
-                                border: OutlineInputBorder(),
+                                labelStyle: const TextStyle(color: Colors.white),
+                                border: const OutlineInputBorder(),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                               ),
-                              validator: (value) => value?.isEmpty ?? true ? 'Required' : null,
+                              
                               onChanged: (value) => itemDescription = value,
                               maxLines: 2,
                             ),
                             const SizedBox(height: 16),
                             TextFormField(
-                              decoration: const InputDecoration(
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
                                 labelText: 'FRT Hours',
-                                border: OutlineInputBorder(),
+                                labelStyle: const TextStyle(color: Colors.white),
+                                border: const OutlineInputBorder(),
+                                enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                               ),
-                              validator: (value) {
-                                if (value?.isEmpty ?? true) return 'Required';
-                                if (double.tryParse(value!) == null) return 'Enter valid number';
-                                return null;
-                              },
                               onChanged: (value) => frtHours = double.tryParse(value ?? '0'),
                               keyboardType: TextInputType.number,
                             ),
@@ -400,14 +446,13 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                                   tech['_id'].toString(),
                                   "${tech['name']} (${tech['team']})"
                                 )).toList(),
-                                title: const Text("Select Technicians"),
+                                title: const Text("Select Technicians", style: TextStyle(color: Colors.white)),
                                 selectedItems: selectedTechnicians,
                                 onSelectionChanged: (values) {
                                   setState(() {
                                     selectedTechnicians = values.cast<String>();
                                   });
                                 },
-                                validator: (values) => values?.isEmpty ?? true ? 'Select at least one' : null,
                               )
                             else
                               const CircularProgressIndicator(),
@@ -416,10 +461,11 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                               onPressed: isLoading ? null : handleBayAllocation,
                               style: ElevatedButton.styleFrom(
                                 minimumSize: const Size(double.infinity, 50),
+                                backgroundColor: Colors.grey[900],
                               ),
                               child: isLoading 
                                   ? const CircularProgressIndicator()
-                                  : const Text('Allocate Bay'),
+                                  : const Text('Allocate Bay', style: TextStyle(color: Colors.white)),
                             ),
                           ],
                         ),
@@ -435,13 +481,17 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                             const SizedBox(height: 16),
                             if (experts.isNotEmpty)
                               DropdownButtonFormField<String>(
-                                decoration: const InputDecoration(
+                                style: const TextStyle(color: Colors.white),
+                                dropdownColor: Colors.grey[900],
+                                decoration: InputDecoration(
                                   labelText: 'Select Expert',
-                                  border: OutlineInputBorder(),
+                                  labelStyle: const TextStyle(color: Colors.white),
+                                  border: const OutlineInputBorder(),
+                                  enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
                                 ),
                                 items: experts.map((expert) => DropdownMenuItem<String>(
                                   value: expert['_id'].toString(),
-                                  child: Text("${expert['name']} (${expert['team']})"),
+                                  child: Text("${expert['name']} (${expert['team']})", style: const TextStyle(color: Colors.white)),
                                 )).toList(),
                                 onChanged: (value) => selectedExpert = value,
                                 validator: (value) => value == null ? 'Required' : null,
@@ -453,10 +503,11 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                               onPressed: isLoading ? null : handleAssignExpert,
                               style: ElevatedButton.styleFrom(
                                 minimumSize: const Size(double.infinity, 50),
+                                backgroundColor: Colors.grey[900],
                               ),
                               child: isLoading 
                                   ? const CircularProgressIndicator()
-                                  : const Text('Assign Expert'),
+                                  : const Text('Assign Expert', style: TextStyle(color: Colors.white)),
                             ),
                           ],
                         ),
@@ -472,12 +523,12 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                           const SizedBox(height: 20),
                           const Text(
                             'Mark Job as Finished',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                           ),
                           const SizedBox(height: 30),
                           Text(
                             'Vehicle: ${vehicleNumber ?? 'Not scanned'}',
-                            style: const TextStyle(fontSize: 16),
+                            style: const TextStyle(fontSize: 16, color: Colors.white),
                           ),
                           const SizedBox(height: 30),
                           ElevatedButton(
@@ -488,7 +539,7 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
                             ),
                             child: isLoading 
                                 ? const CircularProgressIndicator()
-                                : const Text('Confirm Finish'),
+                                : const Text('Confirm Finish', style: TextStyle(color: Colors.white)),
                           ),
                         ],
                       ),
@@ -500,6 +551,9 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: Colors.black,
+        unselectedItemColor: Colors.grey,
+        selectedItemColor: Colors.white,
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
         items: const [
@@ -521,7 +575,6 @@ class _JobControllerDashboardState extends State<JobControllerDashboard> {
   }
 }
 
-// QR Scanner Screen remains the same
 class QRScannerScreen extends StatefulWidget {
   const QRScannerScreen({Key? key}) : super(key: key);
 
@@ -542,7 +595,11 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan Vehicle QR')),
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Scan Vehicle QR', style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.black,
+      ),
       body: MobileScanner(
         controller: cameraController,
         onDetect: (capture) {
@@ -559,7 +616,6 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   }
 }
 
-// MultiSelectChipField widget remains the same
 class MultiSelectChipField extends StatelessWidget {
   final List<MultiSelectItem> items;
   final List selectedItems;
@@ -589,8 +645,10 @@ class MultiSelectChipField extends StatelessWidget {
               spacing: 8.0,
               children: items.map((item) {
                 return ChoiceChip(
-                  label: Text(item.label),
+                  label: Text(item.label, style: const TextStyle(color: Colors.white)),
                   selected: selectedItems.contains(item.value),
+                  selectedColor: Colors.grey[800],
+                  backgroundColor: Colors.grey[900],
                   onSelected: (selected) {
                     List newSelected = List.from(selectedItems);
                     if (selected) {

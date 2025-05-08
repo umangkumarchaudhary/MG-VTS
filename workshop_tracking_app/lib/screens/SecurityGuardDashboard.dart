@@ -4,23 +4,32 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class SecurityGuardDashboard extends StatefulWidget {
-  final String token; // Token will come from parent widget
+  final String token;
+  final VoidCallback onLogout;
 
-  const SecurityGuardDashboard({Key? key, required this.token}) : super(key: key);
+  const SecurityGuardDashboard({
+    Key? key, 
+    required this.token,
+    required this.onLogout,
+  }) : super(key: key);
 
   @override
   State<SecurityGuardDashboard> createState() => _SecurityGuardDashboardState();
 }
 
 class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
-  // Submission variables
   String? scannedVehicleNumber;
   bool isScanning = false;
   String eventType = 'Start';
   final TextEditingController kmController = TextEditingController();
   final TextEditingController vehicleNumberController = TextEditingController();
+  
+  // New fields for bringBy/takeOutBy functionality
+  String? bringBy;
+  String? takeOutBy;
+  final TextEditingController customerNameController = TextEditingController();
+  final TextEditingController customerNameOutController = TextEditingController();
 
-  // History variables
   List<Map<String, dynamic>> inVehicles = [];
   List<Map<String, dynamic>> outVehicles = [];
   final TextEditingController searchVehicleController = TextEditingController();
@@ -29,8 +38,8 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
   bool isLoadingHistory = false;
   String? historyError;
 
-  final String backendUrl = 'http://192.168.0.103:5000/api/vehicle-check';
-  final String historyUrl = 'http://192.168.0.103:5000/api/security-gate-history';
+  final String backendUrl = 'http://192.168.1.62:5000/api/vehicle-check';
+  final String historyUrl = 'http://192.168.1.62:5000/api/security-gate-history';
 
   @override
   void initState() {
@@ -42,11 +51,12 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
   void dispose() {
     kmController.dispose();
     vehicleNumberController.dispose();
+    customerNameController.dispose();
+    customerNameOutController.dispose();
     searchVehicleController.dispose();
     super.dispose();
   }
 
-  // QR Scanner
   Future<void> scanQRCode() async {
     setState(() => isScanning = true);
 
@@ -74,7 +84,6 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
     }
   }
 
-  // Submit IN/OUT event
   Future<void> submitData() async {
     final vehicleNumber = scannedVehicleNumber ?? vehicleNumberController.text.trim();
     if (vehicleNumber.isEmpty) {
@@ -92,6 +101,35 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
       return;
     }
 
+    // Validate bringBy/takeOutBy fields based on event type
+    if (eventType == 'Start' && bringBy == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select who is bringing the vehicle')),
+      );
+      return;
+    }
+
+    if (eventType == 'Start' && bringBy == 'Customer' && customerNameController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter customer name')),
+      );
+      return;
+    }
+
+    if (eventType == 'End' && takeOutBy == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select who is taking out the vehicle')),
+      );
+      return;
+    }
+
+    if (eventType == 'End' && takeOutBy == 'Customer' && customerNameOutController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter customer name')),
+      );
+      return;
+    }
+
     try {
       Map<String, dynamic> body = {
         'vehicleNumber': vehicleNumber,
@@ -99,10 +137,19 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
         'eventType': eventType,
         'role': 'Security Guard',
       };
+
       if (eventType == 'Start') {
         body['inKM'] = km;
+        body['bringBy'] = bringBy;
+        if (bringBy == 'Customer') {
+          body['customerName'] = customerNameController.text;
+        }
       } else {
         body['outKM'] = km;
+        body['takeOutBy'] = takeOutBy;
+        if (takeOutBy == 'Customer') {
+          body['customerNameOut'] = customerNameOutController.text;
+        }
       }
 
       final response = await http.post(
@@ -118,12 +165,7 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Vehicle event submitted successfully')),
         );
-        setState(() {
-          scannedVehicleNumber = null;
-          vehicleNumberController.clear();
-          kmController.clear();
-          eventType = 'Start';
-        });
+        resetForm();
         fetchVehicleHistory();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -137,7 +179,19 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
     }
   }
 
-  // Date picker helper
+  void resetForm() {
+    setState(() {
+      scannedVehicleNumber = null;
+      vehicleNumberController.clear();
+      kmController.clear();
+      customerNameController.clear();
+      customerNameOutController.clear();
+      bringBy = null;
+      takeOutBy = null;
+      // Keep the same event type after submission
+    });
+  }
+
   Future<void> pickDate(BuildContext context, bool isFrom) async {
     final initialDate = DateTime.now();
     final picked = await showDatePicker(
@@ -157,7 +211,6 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
     }
   }
 
-  // Fetch vehicle history
   Future<void> fetchVehicleHistory() async {
     setState(() {
       isLoadingHistory = true;
@@ -204,7 +257,6 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
     }
   }
 
-  // Responsive padding
   EdgeInsets getResponsivePadding(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     if (width < 400) {
@@ -222,6 +274,33 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
       appBar: AppBar(
         title: const Text('Security Dashboard'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Logout'),
+                  content: const Text('Are you sure you want to logout?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        widget.onLogout();
+                      },
+                      child: const Text('Logout'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -270,7 +349,17 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
                                 value: 'Start',
                                 groupValue: eventType,
                                 onChanged: (value) {
-                                  setState(() => eventType = value!);
+                                  setState(() {
+                                    eventType = value!;
+                                    // Clear related fields when switching event type
+                                    if (eventType == 'Start') {
+                                      takeOutBy = null;
+                                      customerNameOutController.clear();
+                                    } else {
+                                      bringBy = null;
+                                      customerNameController.clear();
+                                    }
+                                  });
                                 },
                               ),
                               const Text('IN', style: TextStyle(fontSize: 16)),
@@ -279,7 +368,17 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
                                 value: 'End',
                                 groupValue: eventType,
                                 onChanged: (value) {
-                                  setState(() => eventType = value!);
+                                  setState(() {
+                                    eventType = value!;
+                                    // Clear related fields when switching event type
+                                    if (eventType == 'Start') {
+                                      takeOutBy = null;
+                                      customerNameOutController.clear();
+                                    } else {
+                                      bringBy = null;
+                                      customerNameController.clear();
+                                    }
+                                  });
                                 },
                               ),
                               const Text('OUT', style: TextStyle(fontSize: 16)),
@@ -294,6 +393,74 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
                               border: const OutlineInputBorder(),
                             ),
                             style: const TextStyle(fontSize: 18),
+                          ),
+                          const SizedBox(height: 16),
+                          
+                          // Bring By/Take Out By Section
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                eventType == 'Start' ? 'Brought By:' : 'Taken Out By:',
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                              Row(
+                                children: [
+                                  Radio<String>(
+                                    value: 'Driver',
+                                    groupValue: eventType == 'Start' ? bringBy : takeOutBy,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        if (eventType == 'Start') {
+                                          bringBy = value;
+                                          if (value == 'Driver') {
+                                            customerNameController.clear();
+                                          }
+                                        } else {
+                                          takeOutBy = value;
+                                          if (value == 'Driver') {
+                                            customerNameOutController.clear();
+                                          }
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  const Text('Driver'),
+                                  const SizedBox(width: 20),
+                                  Radio<String>(
+                                    value: 'Customer',
+                                    groupValue: eventType == 'Start' ? bringBy : takeOutBy,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        if (eventType == 'Start') {
+                                          bringBy = value;
+                                        } else {
+                                          takeOutBy = value;
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  const Text('Customer'),
+                                ],
+                              ),
+                              if ((eventType == 'Start' && bringBy == 'Customer') || 
+                                  (eventType == 'End' && takeOutBy == 'Customer'))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: TextField(
+                                    controller: eventType == 'Start' 
+                                        ? customerNameController 
+                                        : customerNameOutController,
+                                    decoration: InputDecoration(
+                                      labelText: eventType == 'Start' 
+                                          ? 'Customer Name (Bringing)' 
+                                          : 'Customer Name (Taking Out)',
+                                      border: const OutlineInputBorder(),
+                                    ),
+                                    style: const TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 16),
                           ElevatedButton(
@@ -444,10 +611,17 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
                                     vehicle['vehicleNumber'] ?? '',
                                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
                                   ),
-                                  subtitle: Text(
-                                    'In KM: ${vehicle['inKM'] ?? '-'}\n'
-                                    'In Time: ${vehicle['inTime'] != null ? vehicle['inTime'].toString().split('T').first : 'N/A'}',
-                                    style: const TextStyle(fontSize: 15),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('In KM: ${vehicle['inKM'] ?? '-'}'),
+                                      Text('Brought By: ${vehicle['bringBy'] ?? '-'}'),
+                                      if (vehicle['bringBy'] == 'Customer')
+                                        Text('Customer: ${vehicle['customerName'] ?? '-'}'),
+                                      Text('In Time: ${vehicle['inTime'] != null 
+                                          ? vehicle['inTime'].toString().split('T').first 
+                                          : 'N/A'}'),
+                                    ],
                                   ),
                                 ),
                               );
@@ -475,12 +649,21 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
                                     vehicle['vehicleNumber'] ?? '',
                                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
                                   ),
-                                  subtitle: Text(
-                                    'In KM: ${vehicle['inKM'] ?? '-'}\n'
-                                    'Out KM: ${vehicle['outKM'] ?? '-'}\n'
-                                    'In Time: ${vehicle['inTime'] != null ? vehicle['inTime'].toString().split('T').first : 'N/A'}\n'
-                                    'Out Time: ${vehicle['outTime'] != null ? vehicle['outTime'].toString().split('T').first : 'N/A'}',
-                                    style: const TextStyle(fontSize: 15),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('In KM: ${vehicle['inKM'] ?? '-'}'),
+                                      Text('Out KM: ${vehicle['outKM'] ?? '-'}'),
+                                      Text('Taken Out By: ${vehicle['takeOutBy'] ?? '-'}'),
+                                      if (vehicle['takeOutBy'] == 'Customer')
+                                        Text('Customer: ${vehicle['customerNameOut'] ?? '-'}'),
+                                      Text('In Time: ${vehicle['inTime'] != null 
+                                          ? vehicle['inTime'].toString().split('T').first 
+                                          : 'N/A'}'),
+                                      Text('Out Time: ${vehicle['outTime'] != null 
+                                          ? vehicle['outTime'].toString().split('T').first 
+                                          : 'N/A'}'),
+                                    ],
                                   ),
                                 ),
                               );
@@ -498,7 +681,6 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
   }
 }
 
-// QR Scanner Screen (unchanged)
 class QRScannerScreen extends StatefulWidget {
   const QRScannerScreen({Key? key}) : super(key: key);
 

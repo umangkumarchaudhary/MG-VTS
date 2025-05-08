@@ -25,7 +25,7 @@ class _LiveStatusScreenState extends State<LiveStatusScreen> {
     
     try {
       final response = await http.get(
-        Uri.parse('http://192.168.9.70:5000/api/dashboard/status'),
+        Uri.parse('https://mg-vts-backend.onrender.com/api/dashboard/status'),
         headers: {'Content-Type': 'application/json'},
       );
 

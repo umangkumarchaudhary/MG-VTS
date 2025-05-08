@@ -6,7 +6,13 @@ import 'package:intl/intl.dart';
 
 class ServiceAdvisorDashboard extends StatefulWidget {
   final String token;
-  const ServiceAdvisorDashboard({super.key, required this.token});
+  final VoidCallback onLogout;
+
+  const ServiceAdvisorDashboard({
+    super.key, 
+    required this.token,
+    required this.onLogout,
+  });
 
   @override
   State<ServiceAdvisorDashboard> createState() => _ServiceAdvisorDashboardState();
@@ -14,9 +20,22 @@ class ServiceAdvisorDashboard extends StatefulWidget {
 
 class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
   final TextEditingController vehicleController = TextEditingController();
+  final TextEditingController manualSearchController = TextEditingController();
+  final TextEditingController concernController = TextEditingController();
   bool isLoading = false;
+  bool isDrawerOpen = false;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  String? currentStage; // Tracks which stage is currently being processed
 
-  final String backendUrl = 'http://192.168.9.70:5000/api/vehicle-check';
+  final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
+
+  @override
+  void dispose() {
+    vehicleController.dispose();
+    manualSearchController.dispose();
+    concernController.dispose();
+    super.dispose();
+  }
 
   Future<void> scanQRCode() async {
     final barcode = await Navigator.push<String>(
@@ -30,39 +49,62 @@ class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
     }
   }
 
+  void _showConcernDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Concern/Comment'),
+        content: TextField(
+          controller: concernController,
+          decoration: const InputDecoration(
+            labelText: 'Enter concern or comment',
+            hintText: 'Describe the issue noticed',
+          ),
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              startJobCardCreation();
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> startJobCardCreation() async {
-    await _startStage('jobCardCreation');
-  }
-
-  Future<void> startAdditionalWorkApproval() async {
-    await _startStage('additionalWork');
-  }
-
-  Future<void> startReadyForWashing() async {
-    await _startStage('readyForWashing');
-  }
-
-  Future<void> _startStage(String stage) async {
     final vehicleNumber = vehicleController.text.trim();
     if (vehicleNumber.isEmpty) {
       showSnackBar('Please scan vehicle QR first');
       return;
     }
 
-    final payload = {
-      'vehicleNumber': vehicleNumber,
-      'stage': stage,
-      'eventType': 'Start',
-      'role': 'Service Advisor',
-    };
+    if (currentStage == 'jobCardCreation' && concernController.text.isEmpty) {
+      showSnackBar('Please enter a concern before submitting');
+      return;
+    }
 
-    await sendData(payload);
-  }
-
-  Future<void> sendData(Map<String, dynamic> payload) async {
-    setState(() => isLoading = true);
+    setState(() {
+      currentStage = 'jobCardCreation';
+      isLoading = true;
+    });
 
     try {
+      final payload = {
+        'vehicleNumber': vehicleNumber,
+        'stage': 'jobCardCreation',
+        'eventType': 'Start',
+        'role': 'Service Advisor',
+        'commentText': concernController.text,
+      };
+
       final response = await http.post(
         Uri.parse(backendUrl),
         headers: {
@@ -72,14 +114,12 @@ class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
         body: json.encode(payload),
       );
 
-      final result = json.decode(response.body);
-      final String msg = result['message'] ?? 'Success';
-      final bool alreadyStarted = result['alreadyStarted'] ?? false;
-
       if (response.statusCode == 200) {
-        showSnackBar(msg, success: !alreadyStarted);
+        showSnackBar('Job Card Creation started successfully', success: true);
+        resetForm();
       } else {
-        showSnackBar(result['error'] ?? 'Failed');
+        final error = json.decode(response.body)['message'] ?? 'Failed to start Job Card Creation';
+        showSnackBar(error);
       }
     } catch (e) {
       showSnackBar('Error: $e');
@@ -88,14 +128,159 @@ class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
     }
   }
 
-  Future<void> fetchAndShowJourney() async {
+  Future<void> startAdditionalWorkApproval() async {
+    await _processStage('additionalWork', 'Additional Work Approval');
+  }
+
+  Future<void> startReadyForWashing() async {
+    await _processStage('readyForWashing', 'Ready for Washing');
+  }
+
+  Future<void> _processStage(String stage, String stageName) async {
     final vehicleNumber = vehicleController.text.trim();
     if (vehicleNumber.isEmpty) {
+      showSnackBar('Please scan vehicle QR first');
+      return;
+    }
+
+    setState(() {
+      currentStage = stage;
+      isLoading = true;
+    });
+
+    try {
+      final payload = {
+        'vehicleNumber': vehicleNumber,
+        'stage': stage,
+        'eventType': 'Start',
+        'role': 'Service Advisor',
+      };
+
+      final response = await http.post(
+        Uri.parse(backendUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.token}',
+        },
+        body: json.encode(payload),
+      );
+
+      if (response.statusCode == 200) {
+        showSnackBar('$stageName started successfully', success: true);
+        resetForm();
+      } else {
+        final error = json.decode(response.body)['message'] ?? 'Failed to start $stageName';
+        showSnackBar(error);
+      }
+    } catch (e) {
+      showSnackBar('Error: $e');
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  void resetForm() {
+    vehicleController.clear();
+    concernController.clear();
+    currentStage = null;
+  }
+
+  Future<void> fetchJobCardHistory() async {
+    setState(() => isLoading = true);
+    try {
+      final response = await http.get(
+        Uri.parse('https://mg-vts-backend.onrender.com/api/job-card-history'),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _showHistoryDialog(data, 'Job Card History');
+      } else {
+        showSnackBar('Failed to fetch job card history');
+      }
+    } catch (e) {
+      showSnackBar('Error: $e');
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> fetchVehicleHistory() async {
+    setState(() => isLoading = true);
+    try {
+      final response = await http.get(
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle-history'),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        _showHistoryDialog(data, 'Vehicle History');
+      } else {
+        showSnackBar('Failed to fetch vehicle history');
+      }
+    } catch (e) {
+      showSnackBar('Error: $e');
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  void _showHistoryDialog(List<dynamic> historyData, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: historyData.length,
+            itemBuilder: (context, index) {
+              final item = historyData[index];
+              return Card(
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                child: ListTile(
+                  title: Text(item['vehicleNumber'] ?? 'Unknown Vehicle'),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (item['concern'] != null) 
+                        Text('Concern: ${item['concern']}'),
+                      if (item['startTime'] != null)
+                        Text('Date: ${DateFormat('dd-MM-yyyy hh:mm a').format(DateTime.parse(item['startTime']).toLocal())}'),
+                      if (item['performedBy'] != null)
+                        Text('By: ${item['performedBy']['name'] ?? 'Unknown'}'),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> fetchAndShowJourney([String? vehicleNumber]) async {
+    final vNumber = vehicleNumber ?? vehicleController.text.trim();
+    if (vNumber.isEmpty) {
       showSnackBar('Please enter or scan vehicle number');
       return;
     }
 
-    final url = 'http://192.168.9.70:5000/api/vehicles/$vehicleNumber/full-journey';
+    final url = 'https://mg-vts-backend.onrender.com/api/vehicles/$vNumber/full-journey';
 
     try {
       setState(() => isLoading = true);
@@ -166,6 +351,35 @@ class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
     }
   }
 
+  void _showManualSearchDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Search Vehicle Journey'),
+        content: TextField(
+          controller: manualSearchController,
+          decoration: const InputDecoration(
+            labelText: 'Enter Vehicle Number',
+            hintText: 'e.g. ABC123',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              fetchAndShowJourney(manualSearchController.text.trim());
+            },
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void showSnackBar(String message, {bool success = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
@@ -173,60 +387,138 @@ class _ServiceAdvisorDashboardState extends State<ServiceAdvisorDashboard> {
     ));
   }
 
+  void _handleLogout() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onLogout();
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
         title: const Text('Service Advisor Dashboard'),
+        actions: [
+          IconButton(
+            onPressed: _handleLogout,
+            icon: const Icon(Icons.logout),
+            tooltip: 'Logout',
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(
-              controller: vehicleController,
-              readOnly: true,
-              decoration: const InputDecoration(
-                labelText: 'Vehicle Number',
-                prefixIcon: Icon(Icons.directions_car),
-                border: OutlineInputBorder(),
+            // Vehicle Scan Section
+            Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: vehicleController,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Vehicle Number',
+                        prefixIcon: Icon(Icons.directions_car),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton.icon(
+                      onPressed: scanQRCode,
+                      icon: const Icon(Icons.qr_code_scanner),
+                      label: const Text('Scan Vehicle QR'),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            ElevatedButton.icon(
-              onPressed: scanQRCode,
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan Vehicle QR'),
-            ),
+            
             const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: isLoading ? null : startJobCardCreation,
-              child: isLoading
-                  ? const CircularProgressIndicator()
-                  : const Text('Start Job Card Creation'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: isLoading ? null : startAdditionalWorkApproval,
-              child: isLoading
-                  ? const CircularProgressIndicator()
-                  : const Text('Start Additional Work Approval'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: isLoading ? null : startReadyForWashing,
-              child: isLoading
-                  ? const CircularProgressIndicator()
-                  : const Text('Start Ready for Washing'),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: isLoading ? null : fetchAndShowJourney,
-              icon: const Icon(Icons.search),
-              label: const Text('Search Vehicle Journey'),
+            
+            // Process Buttons Section
+            Expanded(
+              child: ListView(
+                children: [
+                  _buildProcessButton(
+                    title: 'Start Job Card Creation',
+                    icon: Icons.create,
+                    onPressed: () {
+                      if (vehicleController.text.isEmpty) {
+                        showSnackBar('Please scan vehicle QR first');
+                      } else {
+                        _showConcernDialog();
+                      }
+                    },
+                  ),
+                  
+                  _buildProcessButton(
+                    title: 'Additional Work Approval',
+                    icon: Icons.build,
+                    onPressed: startAdditionalWorkApproval,
+                  ),
+                  
+                  _buildProcessButton(
+                    title: 'Ready for Washing',
+                    icon: Icons.local_car_wash,
+                    onPressed: startReadyForWashing,
+                  ),
+                  
+                  _buildProcessButton(
+                    title: 'Check Vehicle History',
+                    icon: Icons.history,
+                    onPressed: fetchVehicleHistory,
+                  ),
+                  
+                  _buildProcessButton(
+                    title: 'Check Job Card History',
+                    icon: Icons.assignment,
+                    onPressed: fetchJobCardHistory,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildProcessButton({
+    required String title,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      child: ListTile(
+        leading: Icon(icon, size: 32),
+        title: Text(title, style: const TextStyle(fontSize: 18)),
+        onTap: isLoading ? null : onPressed,
+        trailing: isLoading && currentStage == title.toLowerCase()
+            ? const CircularProgressIndicator()
+            : const Icon(Icons.arrow_forward),
       ),
     );
   }

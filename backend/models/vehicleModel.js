@@ -12,7 +12,7 @@ const stageSchema = {
 // Track all events
 const eventSchema = new Schema({
   stage: { type: String, required: true },
-  eventType: { type: String, enum: ['Start', 'Pause', 'Resume', 'End'], required: true },
+  eventType: { type: String, enum: ['Start', 'Pause', 'Resume', 'End', 'AdditionalWorkNeeded'], required: true },
   performedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   timestamp: { type: Date, default: Date.now },
   additionalData: Schema.Types.Mixed
@@ -32,8 +32,13 @@ const vehicleSchema = new Schema({
   securityGate: {
     ...stageSchema,
     inKM: Number,
-    outKM: Number
-  },
+    outKM: Number,
+    bringBy: { type: String, enum: ['Driver', 'Customer'] },
+    customerName: String,
+    takeOutBy: { type: String, enum: ['Driver', 'Customer'] },
+    customerNameOut: String
+  },  
+  
 
   // 3. Interactive Bay (with endedBy)
   interactiveBay: {
@@ -48,9 +53,16 @@ const vehicleSchema = new Schema({
   // 4. Job Card Creation (Start Only)
   jobCardCreation: {
     startTime: Date,
-    performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    isCompleted: { type: Boolean, default: false }
+    performedBy: { type: Schema.Types.ObjectId, ref: 'User' }, // This tracks the user who started the Job Card Creation
+    isCompleted: { type: Boolean, default: false },
+    concerns: [
+      {
+        comment: String, // The concern or issue noticed by the user
+        addedAt: { type: Date, default: Date.now } // Timestamp of when the concern was added
+      }
+    ]
   },
+  
 
   // 5. Bay Allocation (Start Only)
   bayAllocation: [{
@@ -81,8 +93,17 @@ const vehicleSchema = new Schema({
     workType: String,
     bayNumber: String,
     pauseTime: Date,
-    resumeTime: Date
+    resumeTime: Date,
+  
+    additionalWorkLogs: [
+      {
+        description: { type: String, required: true },
+        addedAt: { type: Date, default: Date.now }
+      }
+    ]
   },
+  
+  
 
   // 8. Assign Expert (Start Only)
   assignExpert: {

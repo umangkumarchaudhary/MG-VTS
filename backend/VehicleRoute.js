@@ -65,25 +65,52 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         }
         break;
 
-      case 'securityGate':
-        console.log('Handling Security Gate stage...');
-        if (eventType === 'Start') {
-          console.log('Start event for Security Gate');
-          vehicle.securityGate = { 
-            startTime: now, 
-            performedBy: userId, 
-            inKM: data.inKM 
-          };
-        } else if (eventType === 'End') {
-          console.log('End event for Security Gate');
-          if (!vehicle.securityGate) vehicle.securityGate = {};
-          vehicle.securityGate.endTime = now;
-          vehicle.securityGate.performedBy = userId;
-          vehicle.securityGate.outKM = data.outKM;
-          vehicle.securityGate.isCompleted = true;
-          closeOpenStages(vehicle, now);
-        }
-        break;
+        case 'securityGate':
+          console.log('Handling Security Gate stage...');
+          
+          if (eventType === 'Start') {
+            console.log('Start event for Security Gate');
+        
+            if (!data.bringBy || !['Driver', 'Customer'].includes(data.bringBy)) {
+              return res.status(400).json({ message: 'Invalid or missing bringBy value (Driver or Customer expected).' });
+            }
+        
+            if (data.bringBy === 'Customer' && !data.customerName) {
+              return res.status(400).json({ message: 'Customer name is required when bringBy is Customer.' });
+            }
+        
+            vehicle.securityGate = {
+              startTime: now,
+              performedBy: userId,
+              inKM: data.inKM,
+              bringBy: data.bringBy,
+              customerName: data.bringBy === 'Customer' ? data.customerName : undefined,
+            };
+        
+          } else if (eventType === 'End') {
+            console.log('End event for Security Gate');
+        
+            if (!vehicle.securityGate) vehicle.securityGate = {};
+        
+            if (!data.takeOutBy || !['Driver', 'Customer'].includes(data.takeOutBy)) {
+              return res.status(400).json({ message: 'Invalid or missing takeOutBy value (Driver or Customer expected).' });
+            }
+        
+            if (data.takeOutBy === 'Customer' && !data.customerNameOut) {
+              return res.status(400).json({ message: 'Customer name is required when takeOutBy is Customer.' });
+            }
+        
+            vehicle.securityGate.endTime = now;
+            vehicle.securityGate.performedBy = userId;
+            vehicle.securityGate.outKM = data.outKM;
+            vehicle.securityGate.takeOutBy = data.takeOutBy;
+            vehicle.securityGate.customerNameOut = data.takeOutBy === 'Customer' ? data.customerNameOut : undefined;
+            vehicle.securityGate.isCompleted = true;
+        
+            closeOpenStages(vehicle, now);
+          }
+          break;
+        
 
       case 'interactiveBay':
         console.log('Handling Interactive Bay stage...');
@@ -102,24 +129,35 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         }
         break;
 
-      case 'jobCardCreation':
-  console.log('Handling Job Card Creation stage...');
-  if (eventType === 'Start') {
-    // ✅ Check only if startTime exists
-    if (vehicle.jobCardCreation?.startTime) {
-      return res.status(400).json({
-        message: 'Job card creation has already been started for this vehicle'
-      });
-    }
-
-    console.log('Start event for Job Card Creation');
-    vehicle.jobCardCreation = {
-      startTime: now,
-      performedBy: userId,
-      isCompleted: false
-    };
-  }
-  break;
+        case 'jobCardCreation':
+          console.log('Handling Job Card Creation stage...');
+        
+          if (eventType === 'Start') {
+            // ✅ Check only if startTime exists
+            if (vehicle.jobCardCreation?.startTime) {
+              return res.status(400).json({
+                message: 'Job card creation has already been started for this vehicle'
+              });
+            }
+        
+            // Validate if the user has provided a comment (concern)
+            if (!commentText || commentText.trim() === '') {
+              return res.status(400).json({
+                message: 'You must provide a concern/comment when starting the job card creation process.'
+              });
+            }
+        
+            console.log('Start event for Job Card Creation');
+            vehicle.jobCardCreation = {
+              startTime: now,
+              performedBy: userId,
+              isCompleted: false,
+              concern: commentText, // Storing the comment/concern provided by the user
+              addedAt: now // Timestamp when the concern/comment was added
+            };
+          }
+          break;
+        
 
 
   case 'additionalWork':
@@ -167,12 +205,6 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
 
       case 'bayAllocation':
         console.log('Handling Bay Allocation stage...');
-        
-        if (!vehicle.jobCardCreation?.startTime) {
-          return res.status(400).json({
-            message: 'Job card must be created before bay allocation'
-          });
-        }
       
         // Ensure userId is available (from auth middleware)
         if (!userId) {
@@ -222,6 +254,7 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
         // Add to bayAllocation array
         vehicle.bayAllocation = [...existingAllocations, newAllocation];
         break;
+      
       
 
 
@@ -277,29 +310,60 @@ case 'jobCardReceived':
         }
         break;
 
-      case 'bayWork':
-        console.log('Handling Bay Work stage...');
-        if (eventType === 'Start') {
-          console.log('Start event for Bay Work');
-          vehicle.bayWork = { 
-            startTime: now, 
-            performedBy: userId,
-            workType: data.workType,
-            bayNumber: data.bayNumber
-          };
-        } else if (eventType === 'Pause') {
-          console.log('Pause event for Bay Work');
-          vehicle.bayWork.pauseTime = now;
-        } else if (eventType === 'Resume') {
-          console.log('Resume event for Bay Work');
-          vehicle.bayWork.resumeTime = now;
-        } else if (eventType === 'End') {
-          console.log('End event for Bay Work');
-          vehicle.bayWork.endTime = now;
-          vehicle.bayWork.endedBy = userId; 
-          vehicle.bayWork.isCompleted = true;
-        }
-        break;
+        case 'bayWork':
+  console.log('Handling Bay Work stage...');
+
+  // Ensure bayWork exists before accessing nested fields
+  if (!vehicle.bayWork) {
+    vehicle.bayWork = {};
+  }
+
+  if (eventType === 'Start') {
+    console.log('Start event for Bay Work');
+    vehicle.bayWork = {
+      startTime: now,
+      performedBy: userId,
+      workType: data.workType,
+      bayNumber: data.bayNumber,
+      additionalWorkLogs: [] // Initialize logs
+    };
+
+  } else if (eventType === 'Pause') {
+    console.log('Pause event for Bay Work');
+    vehicle.bayWork.pauseTime = now;
+
+  } else if (eventType === 'Resume') {
+    console.log('Resume event for Bay Work');
+    vehicle.bayWork.resumeTime = now;
+
+  } else if (eventType === 'End') {
+    console.log('End event for Bay Work');
+    vehicle.bayWork.endTime = now;
+    vehicle.bayWork.endedBy = userId;
+    vehicle.bayWork.isCompleted = true;
+
+  } else if (eventType === 'AdditionalWorkNeeded') {
+    console.log('Technician reported additional work needed');
+
+    const commentText = data?.additionalData?.commentText;
+
+if (!commentText || commentText.trim() === '') {
+  return res.status(400).json({ message: 'Please provide a description for the additional work.' });
+}
+
+
+    if (!vehicle.bayWork.additionalWorkLogs) {
+      vehicle.bayWork.additionalWorkLogs = [];
+    }
+
+    vehicle.bayWork.additionalWorkLogs.push({
+      description: commentText,
+      addedAt: now
+    });
+  }
+
+  break;
+
         
       case 'partsEstimation':
         console.log('Handling Parts Estimation stage...');
@@ -432,6 +496,39 @@ case 'jobCardReceived':
   }
 });
 
+router.get('/user-stage-history', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    // Find all vehicles where the user has performed any of these stages
+    const vehicles = await Vehicle.find({
+      $or: [
+        { 'jobCardCreation.performedBy': userId },
+        { 'additionalWork.performedBy': userId },
+        { 'readyForWashing.performedBy': userId }
+      ]
+    });
+
+    // Filter history to only include these specific stages performed by this user
+    const userHistory = vehicles.map(vehicle => {
+      return {
+        vehicleNumber: vehicle.vehicleNumber,
+        stages: vehicle.history.filter(event => 
+          (event.stage === 'jobCardCreation' || 
+           event.stage === 'additionalWork' || 
+           event.stage === 'readyForWashing') &&
+          event.performedBy.toString() === userId.toString()
+        )
+      };
+    }).filter(vehicle => vehicle.stages.length > 0); // Only include vehicles with matching stages
+
+    res.status(200).json(userHistory);
+  } catch (error) {
+    console.error('Error fetching user stage history:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 
 router.get("/vehicles", async (req, res) => {
   try {
@@ -547,9 +644,6 @@ router.get('/vehicles/:vehicleNumber/full-journey', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
-
-
 
 
 module.exports = router;

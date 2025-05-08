@@ -2,10 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:intl/intl.dart';
 
 class TechnicianDashboard extends StatefulWidget {
   final String token;
-  const TechnicianDashboard({Key? key, required this.token}) : super(key: key);
+  final VoidCallback onLogout;
+
+  const TechnicianDashboard({
+    Key? key, 
+    required this.token,
+    required this.onLogout,
+  }) : super(key: key);
 
   @override
   State<TechnicianDashboard> createState() => _TechnicianDashboardState();
@@ -13,22 +20,57 @@ class TechnicianDashboard extends StatefulWidget {
 
 class _TechnicianDashboardState extends State<TechnicianDashboard> {
   String? scannedVehicleNumber;
-  String selectedStage = 'interactiveBay';
+  String selectedStage = 'bayWork';
   String eventType = 'Start';
   bool isLoading = false;
+  bool showWorkInProgress = false;
+  List<dynamic> workInProgress = [];
+  final TextEditingController additionalWorkController = TextEditingController();
 
   final vehicleController = TextEditingController();
   final workTypeController = TextEditingController();
   final bayNumberController = TextEditingController();
 
-  final String backendUrl = 'http://192.168.9.77:5000/api/vehicle-check';
+  final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
+  final String workInProgressUrl = 'https://mg-vts-backend.onrender.com/api/work-in-progress';
+
+  @override
+  void initState() {
+    super.initState();
+    fetchWorkInProgress();
+  }
 
   @override
   void dispose() {
     vehicleController.dispose();
     workTypeController.dispose();
     bayNumberController.dispose();
+    additionalWorkController.dispose();
     super.dispose();
+  }
+
+  Future<void> fetchWorkInProgress() async {
+    setState(() => isLoading = true);
+    try {
+      final response = await http.get(
+        Uri.parse(workInProgressUrl),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          workInProgress = json.decode(response.body);
+        });
+      } else {
+        showError('Failed to fetch work in progress');
+      }
+    } catch (e) {
+      showError('Error: ${e.toString()}');
+    } finally {
+      setState(() => isLoading = false);
+    }
   }
 
   Future<void> scanQRCode() async {
@@ -70,6 +112,7 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
 
       if (response.statusCode == 200) {
         _handleSuccess();
+        fetchWorkInProgress();
       } else {
         showError('Error: ${response.body}');
       }
@@ -88,41 +131,57 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
       'role': 'Technician',
     };
 
-    if (selectedStage == 'interactiveBay' && workTypeController.text.trim().isEmpty) {
-      showError('Please enter work type');
-      return null;
-    }
-    if (selectedStage == 'bayWork' && 
-        (workTypeController.text.trim().isEmpty || bayNumberController.text.trim().isEmpty)) {
-      showError('Please enter both work type and bay number');
-      return null;
-    }
+    // Handling 'bayWork' stage
+    if (selectedStage == 'bayWork') {
+      // Validation for 'Start' event
+      if (eventType == 'Start' &&
+          (workTypeController.text.trim().isEmpty || bayNumberController.text.trim().isEmpty)) {
+        showError('Please enter both work type and bay number');
+        return null;
+      }
 
-    if (selectedStage == 'interactiveBay') {
-      body['workType'] = workTypeController.text.trim();
-    } 
-    else if (selectedStage == 'bayWork') {
-      body['workType'] = workTypeController.text.trim();
-      body['bayNumber'] = bayNumberController.text.trim();
+      // Handling 'AdditionalWorkNeeded' event
+      if (eventType == 'AdditionalWorkNeeded') {
+        if (additionalWorkController.text.trim().isEmpty) {
+          showError('Please describe the additional work needed');
+          return null;
+        }
+        // Convert the additional work description to a JSON string
+        body['additionalData'] = json.encode({
+          'commentText': additionalWorkController.text.trim()
+        });
+      } else {
+        // If it's another event, like 'Start', assign workType and bayNumber
+        body['workType'] = workTypeController.text.trim();
+        body['bayNumber'] = bayNumberController.text.trim();
+      }
     }
 
     return body;
   }
 
   void _handleSuccess() {
+    if (!mounted) return;
+    
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Status submitted'),
+        content: Text('Status submitted successfully'),
         backgroundColor: Colors.green,
       ),
     );
     vehicleController.clear();
     workTypeController.clear();
     bayNumberController.clear();
-    setState(() => scannedVehicleNumber = null);
+    additionalWorkController.clear();
+    setState(() {
+      scannedVehicleNumber = null;
+      eventType = 'Start';
+    });
   }
 
   void showError(String msg) {
+    if (!mounted) return;
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
@@ -131,14 +190,71 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
     );
   }
 
-  void _viewProgress(String stage) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => VehicleProgressScreen(
-          token: widget.token,
-          stage: stage,
+  void _showAdditionalWorkDialog(String vehicleNumber) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Report Additional Work'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Describe the additional work needed:'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: additionalWorkController,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                vehicleController.text = vehicleNumber;
+                selectedStage = 'bayWork';
+                eventType = 'AdditionalWorkNeeded';
+              });
+              submitData();
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLogoutConfirmation() {
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              if (mounted) {
+                widget.onLogout();
+              }
+            },
+            child: const Text('Logout'),
+          ),
+        ],
       ),
     );
   }
@@ -148,52 +264,36 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Technician Dashboard'),
-      ),
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(
-                color: Colors.blue,
-              ),
-              child: Text(
-                'Vehicle History',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                ),
-              ),
-            ),
-            ListTile(
-              title: const Text('Interactive Bay History'),
-              onTap: () {
-                Navigator.pop(context);
-                _viewProgress('interactiveBay');
-              },
-            ),
-            ListTile(
-              title: const Text('Bay Work History'),
-              onTap: () {
-                Navigator.pop(context);
-                _viewProgress('bayWork');
-              },
-            ),
-            ListTile(
-              title: const Text('Expert Stage History'),
-              onTap: () {
-                Navigator.pop(context);
-                _viewProgress('expertStage');
-              },
-            ),
-          ],
-        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: fetchWorkInProgress,
+            tooltip: 'Refresh',
+          ),
+          IconButton(
+            icon: const Icon(Icons.list),
+            onPressed: () => setState(() => showWorkInProgress = !showWorkInProgress),
+            tooltip: 'Work in Progress',
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _showLogoutConfirmation,
+            tooltip: 'Logout',
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (showWorkInProgress) ...[
+              _buildWorkInProgressTable(),
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 20),
+            ],
+            
             // Vehicle Input Section
             Row(
               children: [
@@ -220,13 +320,11 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
             ),
             const SizedBox(height: 20),
 
-            // Stage Selection with View Progress button
+            // Stage Selection
             const Text('SELECT STAGE:', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Column(
               children: [
-                _buildStageButton('Interactive Bay', 'interactiveBay'),
-                const SizedBox(height: 8),
                 _buildStageButton('Bay Work', 'bayWork'),
                 const SizedBox(height: 8),
                 _buildStageButton('Expert', 'expertStage'),
@@ -237,56 +335,56 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
             // Event Type
             const Text('EVENT TYPE:', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 20,
               children: [
-                Radio<String>(
-                  value: 'Start',
-                  groupValue: eventType,
-                  onChanged: (value) => setState(() => eventType = value!),
+                ChoiceChip(
+                  label: const Text('Start'),
+                  selected: eventType == 'Start',
+                  onSelected: (selected) => setState(() => eventType = 'Start'),
                 ),
-                const Text('Start'),
-                const SizedBox(width: 20),
-                Radio<String>(
-                  value: 'End',
-                  groupValue: eventType,
-                  onChanged: (value) => setState(() => eventType = value!),
+                ChoiceChip(
+                  label: const Text('Pause'),
+                  selected: eventType == 'Pause',
+                  onSelected: (selected) => setState(() => eventType = 'Pause'),
                 ),
-                const Text('End'),
+                ChoiceChip(
+                  label: const Text('Resume'),
+                  selected: eventType == 'Resume',
+                  onSelected: (selected) => setState(() => eventType = 'Resume'),
+                ),
+                ChoiceChip(
+                  label: const Text('End'),
+                  selected: eventType == 'End',
+                  onSelected: (selected) => setState(() => eventType = 'End'),
+                ),
               ],
             ),
             const SizedBox(height: 20),
 
             // Stage-Specific Fields
-            if (selectedStage == 'interactiveBay')
-              TextField(
-                controller: workTypeController,
-                decoration: const InputDecoration(
-                  labelText: 'Work Type',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                ),
-              ),
-            
             if (selectedStage == 'bayWork') ...[
-              TextField(
-                controller: workTypeController,
-                decoration: const InputDecoration(
-                  labelText: 'Work Type',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              if (eventType == 'Start') ...[
+                TextField(
+                  controller: workTypeController,
+                  decoration: const InputDecoration(
+                    labelText: 'Work Type',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: bayNumberController,
-                decoration: const InputDecoration(
-                  labelText: 'Bay Number',
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: bayNumberController,
+                  decoration: const InputDecoration(
+                    labelText: 'Bay Number',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
+                  keyboardType: TextInputType.number,
                 ),
-                keyboardType: TextInputType.number,
-              ),
+              ],
             ],
             
             if (selectedStage == 'expertStage')
@@ -338,158 +436,62 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
       ),
     );
   }
-}
 
-class VehicleProgressScreen extends StatefulWidget {
-  final String token;
-  final String stage;
-  const VehicleProgressScreen({Key? key, required this.token, required this.stage}) : super(key: key);
-
-  @override
-  State<VehicleProgressScreen> createState() => _VehicleProgressScreenState();
-}
-
-class _VehicleProgressScreenState extends State<VehicleProgressScreen> {
-  List<dynamic> inProgress = [];
-  List<dynamic> completed = [];
-  bool isLoading = true;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchProgressData();
-  }
-
-  Future<void> _fetchProgressData() async {
-    setState(() {
-      isLoading = true;
-      error = null;
-    });
-
-    try {
-      final response = await http.get(
-        Uri.parse('http://192.168.9.77:5000/api/vehicle-progress/${widget.stage}'),
-        headers: {
-          'Authorization': 'Bearer ${widget.token}',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          inProgress = data['inProgress'] ?? [];
-          completed = data['completed'] ?? [];
-        });
-      } else {
-        setState(() {
-          error = 'Failed to load data: ${response.statusCode}';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        error = 'Error fetching data: ${e.toString()}';
-      });
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('${widget.stage.replaceAll(RegExp(r'([A-Z])'), r' $1')} Progress'),
-      ),
-      body: _buildBody(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _fetchProgressData,
-        child: const Icon(Icons.refresh),
-      ),
-    );
-  }
-
-  Widget _buildBody() {
+  Widget _buildWorkInProgressTable() {
     if (isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (error != null) {
-      return Center(child: Text(error!));
+    if (workInProgress.isEmpty) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('No vehicles currently in progress'),
+        ),
+      );
     }
 
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          const TabBar(
-            tabs: [
-              Tab(text: 'In Progress'),
-              Tab(text: 'Completed'),
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: const [
+              DataColumn(label: Text('Vehicle')),
+              DataColumn(label: Text('Bay')),
+              DataColumn(label: Text('Work Type')),
+              DataColumn(label: Text('Started At')),
+              DataColumn(label: Text('Status')),
+              DataColumn(label: Text('Actions')),
             ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildProgressList(inProgress),
-                _buildProgressList(completed),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProgressList(List<dynamic> items) {
-    if (items.isEmpty) {
-      return const Center(child: Text('No data available'));
-    }
-
-    return ListView.builder(
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return Card(
-          margin: const EdgeInsets.all(8),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item['vehicleNumber'],
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
+            rows: workInProgress.map((vehicle) {
+              return DataRow(cells: [
+                DataCell(Text(vehicle['vehicleNumber'] ?? '')),
+                DataCell(Text(vehicle['bayNumber'] ?? '')),
+                DataCell(Text(vehicle['workType'] ?? '')),
+                DataCell(Text(vehicle['startTimeIST'] ?? '')),
+                DataCell(
+                  Chip(
+                    label: Text(vehicle['status'] ?? ''),
+                    backgroundColor: vehicle['status'] == 'Additional work needed' 
+                        ? Colors.orange.withOpacity(0.2) 
+                        : Colors.green.withOpacity(0.2),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text('Stage: ${item['stageName']}'),
-                if (item['workType'] != null && item['workType'].isNotEmpty)
-                  Text('Work Type: ${item['workType']}'),
-                if (item['bayNumber'] != null && item['bayNumber'].isNotEmpty)
-                  Text('Bay Number: ${item['bayNumber']}'),
-                const SizedBox(height: 8),
-                Text('Started: ${item['startedAtFormatted']}'),
-                Text('By: ${item['startedBy']}'),
-                if (item['status'] == 'Completed') ...[
-                  const SizedBox(height: 8),
-                  Text('Completed: ${item['endedAtFormatted']}'),
-                  Text('By: ${item['endedBy']}'),
-                ],
-                const SizedBox(height: 8),
-                Text(
-                  'Duration: ${item['totalTime']}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                DataCell(
+                  IconButton(
+                    icon: const Icon(Icons.add_task),
+                    onPressed: () => _showAdditionalWorkDialog(vehicle['vehicleNumber']),
+                    tooltip: 'Report Additional Work',
+                  ),
                 ),
-              ],
-            ),
+              ]);
+            }).toList(),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

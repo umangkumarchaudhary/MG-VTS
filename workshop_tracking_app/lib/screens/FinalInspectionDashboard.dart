@@ -6,7 +6,13 @@ import 'package:intl/intl.dart';
 
 class FinalInspectionDashboard extends StatefulWidget {
   final String token;
-  const FinalInspectionDashboard({Key? key, required this.token}) : super(key: key);
+  final VoidCallback onLogout; // Added logout callback
+
+  const FinalInspectionDashboard({
+    Key? key, 
+    required this.token,
+    required this.onLogout, // Added parameter
+  }) : super(key: key);
 
   @override
   State<FinalInspectionDashboard> createState() => _FinalInspectionDashboardState();
@@ -18,8 +24,8 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
   bool isLoading = false;
   bool repairRequired = false;
 
-  final String backendUrl = 'http://192.168.9.77:5000/api/vehicle-check';
-  final String inspectionHistoryUrl = 'http://192.168.9.77:5000/api/final-inspection-history';
+  final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
+  final String inspectionHistoryUrl = 'https://mg-vts-backend.onrender.com/api/final-inspection-history';
 
   List<dynamic> inProgressInspections = [];
   List<dynamic> completedInspections = [];
@@ -149,13 +155,35 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
     }
   }
 
+  void _handleLogout() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onLogout();
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildInspectionForm() {
     final vehicleNumber = vehicleController.text.trim();
     final inProgress = inProgressInspections.any((insp) =>
         insp['vehicleNumber'].toString().toLowerCase() == vehicleNumber.toLowerCase());
 
     if (!inProgress) {
-      // Show Start button
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -168,7 +196,6 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
         ],
       );
     } else {
-      // Show End button, repairRequired switch, and remarks
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -273,13 +300,17 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
             icon: const Icon(Icons.refresh),
             onPressed: () => fetchInspectionHistory(vehicleNumber: vehicleController.text.trim()),
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
+          ),
         ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // Vehicle number input and scan
             Row(
               children: [
                 Expanded(
@@ -301,7 +332,6 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
               ],
             ),
             const SizedBox(height: 12),
-            // Date filter
             Row(
               children: [
                 TextButton.icon(
@@ -328,10 +358,8 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
               ],
             ),
             const SizedBox(height: 12),
-            // Start/End inspection UI
             buildInspectionForm(),
             const SizedBox(height: 16),
-            // Inspection history
             buildInspectionHistory(),
             if (isLoading) const LinearProgressIndicator(),
           ],
@@ -341,7 +369,6 @@ class _FinalInspectionDashboardState extends State<FinalInspectionDashboard> {
   }
 }
 
-/// QR Scanner Screen using mobile_scanner package v6.x
 class QRScannerScreen extends StatefulWidget {
   const QRScannerScreen({Key? key}) : super(key: key);
 

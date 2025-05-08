@@ -5,7 +5,13 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 class DriverDashboard extends StatefulWidget {
   final String token;
-  const DriverDashboard({Key? key, required this.token}) : super(key: key);
+  final VoidCallback onLogout;
+
+  const DriverDashboard({
+    Key? key,
+    required this.token,
+    required this.onLogout,
+  }) : super(key: key);
 
   @override
   State<DriverDashboard> createState() => _DriverDashboardState();
@@ -16,7 +22,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   final TextEditingController kmController = TextEditingController();
   bool isLoading = false;
 
-  final String backendUrl = 'http://192.168.9.77:5000/api/vehicle-check';
+  final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
 
   Future<void> scanQRCode() async {
     final barcode = await Navigator.push<String>(
@@ -107,6 +113,48 @@ class _DriverDashboardState extends State<DriverDashboard> {
     );
   }
 
+  void _handleLogout() {
+  print('[DEBUG] Logout button pressed'); // Debug statement 1
+  
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Logout'),
+      content: const Text('Are you sure you want to logout?'),
+      actions: [
+        TextButton(
+          onPressed: () {
+            print('[DEBUG] Logout cancelled'); // Debug statement 2
+            Navigator.pop(context);
+          },
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () async {
+            print('[DEBUG] Logout confirmed'); // Debug statement 3
+            
+            // First close the dialog
+            Navigator.pop(context);
+            
+            // Add a small delay to ensure dialog is fully dismissed
+            await Future.delayed(const Duration(milliseconds: 100));
+            
+            // Check if widget is still mounted
+            if (!mounted) {
+              print('[DEBUG] Widget not mounted, aborting logout');
+              return;
+            }
+            
+            print('[DEBUG] Calling onLogout callback');
+            widget.onLogout();
+          },
+          child: const Text('Logout'),
+        ),
+      ],
+    ),
+  );
+}
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -117,7 +165,12 @@ class _DriverDashboardState extends State<DriverDashboard> {
             onPressed: openHistoryPage,
             icon: const Icon(Icons.history),
             tooltip: 'Driver History',
-          )
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
+          ),
         ],
       ),
       body: Padding(
@@ -243,8 +296,7 @@ class DriverPickupDropSummary extends StatefulWidget {
   const DriverPickupDropSummary({super.key, required this.token});
 
   @override
-  State<DriverPickupDropSummary> createState() =>
-      _DriverPickupDropSummaryState();
+  State<DriverPickupDropSummary> createState() => _DriverPickupDropSummaryState();
 }
 
 class _DriverPickupDropSummaryState extends State<DriverPickupDropSummary> {
@@ -260,7 +312,7 @@ class _DriverPickupDropSummaryState extends State<DriverPickupDropSummary> {
   Future<void> fetchSummary() async {
     try {
       final response = await http.get(
-        Uri.parse('http://192.168.9.77:5000/api/vehicle/driver-history'), // ✅ UPDATED
+        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle/driver-history'),
         headers: {
           'Authorization': 'Bearer ${widget.token}',
         },
@@ -313,7 +365,6 @@ class _DriverPickupDropSummaryState extends State<DriverPickupDropSummary> {
                             Text('Pickup KM: ${item['pickupKM'] ?? 'N/A'}'),
                             const SizedBox(height: 10),
                             Text('Drop Time: ${item['dropTime'] ?? 'N/A'}'),
-                            
                           ],
                         ),
                       ),

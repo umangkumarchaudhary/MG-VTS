@@ -36,11 +36,11 @@ final mgTheme = ThemeData(
     style: ElevatedButton.styleFrom(
       backgroundColor: mgPrimaryColor,
       foregroundColor: Colors.white,
-      padding: EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-      shape: RoundedRectangleBorder(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+      shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(8)),
       ),
-      textStyle: TextStyle(
+      textStyle: const TextStyle(
         fontWeight: FontWeight.bold,
         fontSize: 16,
       ),
@@ -62,7 +62,13 @@ final mgTheme = ThemeData(
 
 class WashingDashboard extends StatefulWidget {
   final String token;
-  const WashingDashboard({Key? key, required this.token}) : super(key: key);
+  final VoidCallback onLogout; // Added this line
+
+  const WashingDashboard({
+    Key? key, 
+    required this.token,
+    required this.onLogout, // Added this parameter
+  }) : super(key: key);
 
   @override
   State<WashingDashboard> createState() => _WashingDashboardState();
@@ -74,12 +80,35 @@ class _WashingDashboardState extends State<WashingDashboard> {
   bool isLoading = false;
 
   final vehicleController = TextEditingController();
-  final backendUrl = 'http://192.168.9.77:5000/api/vehicle-check';
+  final backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
 
   @override
   void dispose() {
     vehicleController.dispose();
     super.dispose();
+  }
+
+  void _handleLogout() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onLogout();
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> scanQRCode() async {
@@ -177,6 +206,12 @@ class _WashingDashboardState extends State<WashingDashboard> {
             IconButton(
               icon: const Icon(Icons.history),
               onPressed: _viewWashingHistory,
+              tooltip: 'Washing History',
+            ),
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: _handleLogout,
+              tooltip: 'Logout',
             ),
           ],
         ),
