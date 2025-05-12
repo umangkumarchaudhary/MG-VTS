@@ -161,8 +161,12 @@ const vehicleSchema = new Schema({
   readyForWashing: {
     startTime: Date,
     performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    isCompleted: { type: Boolean, default: false }
+    isCompleted: { type: Boolean, default: false },
+    washingType: { type: String, enum: ['Free', 'Paid'], default: 'Free' } // ✅ Add this
   },
+  
+  
+  
 
   washing: [new Schema({
     startTime: Date,

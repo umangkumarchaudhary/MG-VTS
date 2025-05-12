@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 import 'package:workshop_tracking_app/screens/SecurityGuardDashboard.dart';
 import 'package:workshop_tracking_app/screens/TechnicianDashboard.dart';
 import 'package:workshop_tracking_app/screens/WashingDashboard.dart';
@@ -16,6 +18,7 @@ import 'package:workshop_tracking_app/screens/AdminDashboard.dart';
 import '../main.dart';
 
 const String baseUrl = 'https://mg-vts-backend.onrender.com/api';
+final storage = FlutterSecureStorage();
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({Key? key}) : super(key: key);
@@ -47,6 +50,34 @@ class _AuthScreenState extends State<AuthScreen> {
   ];
 
   final List<String> teams = ['A', 'B', 'None'];
+
+  @override
+  void initState() {
+    super.initState();
+    _tryAutoLogin();
+  }
+
+  Future<void> _tryAutoLogin() async {
+    final token = await storage.read(key: 'token');
+    if (token != null) {
+      try {
+        final response = await http.get(
+          Uri.parse('$baseUrl/me'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (response.statusCode == 200) {
+          final userData = json.decode(response.body);
+          String userRole = userData['role'];
+          navigateToDashboard(userRole, token);
+        } else {
+          // Token invalid or expired, remove it
+          await storage.delete(key: 'token');
+        }
+      } catch (e) {
+        // Ignore errors, stay on login screen
+      }
+    }
+  }
 
   Future<void> submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -80,14 +111,15 @@ class _AuthScreenState extends State<AuthScreen> {
         if (isLogin) {
           String userRole = data['user']['role'];
           String token = data['token'];
+          // Store token securely for persistent login
+          await storage.write(key: 'token', value: token);
           navigateToDashboard(userRole, token);
         } else {
-          // Registration success: show success and go back to login
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Registration successful. Please log in.')),
           );
           setState(() {
-            isLogin = true; // Switch to login form
+            isLogin = true;
           });
         }
       } else {
@@ -105,105 +137,41 @@ class _AuthScreenState extends State<AuthScreen> {
   void navigateToDashboard(String role, String token) {
     Widget page;
 
+    void handleLogout() async {
+      await storage.delete(key: 'token');
+      navigatorKey.currentState!.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const AuthScreen()),
+        (route) => false,
+      );
+    }
+
     switch (role) {
       case 'Admin':
-        page = AdminDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = AdminDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Technician':
-        page = TechnicianDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = TechnicianDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Service Advisor':
-        page = ServiceAdvisorDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = ServiceAdvisorDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Quality Inspector':
-        page = FinalInspectionDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = FinalInspectionDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Job Controller':
-        page = JobControllerDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = JobControllerDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Washing':
-        page = WashingDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = WashingDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Security Guard':
-        page = SecurityGuardDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = SecurityGuardDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Driver':
-        page = DriverDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = DriverDashboard(token: token, onLogout: handleLogout);
         break;
       case 'Parts Team':
-        page = PartsTeamDashboard(
-          token: token,
-          onLogout: () {
-            navigatorKey.currentState!.pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const AuthScreen()),
-              (route) => false,
-            );
-          },
-        );
+        page = PartsTeamDashboard(token: token, onLogout: handleLogout);
         break;
       default:
         page = const Scaffold(
@@ -220,7 +188,6 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Remove the default AppBar, use a custom header
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -230,7 +197,6 @@ class _AuthScreenState extends State<AuthScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Header Row: Raam Group MG on the right
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
@@ -240,7 +206,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFFD5001C), // MG Red
+                          color: Color(0xFFD5001C),
                           letterSpacing: 1.2,
                         ),
                         textAlign: TextAlign.right,

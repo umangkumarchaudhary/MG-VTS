@@ -38,8 +38,8 @@ class _SecurityGuardDashboardState extends State<SecurityGuardDashboard> {
   bool isLoadingHistory = false;
   String? historyError;
 
-  final String backendUrl = 'http://192.168.1.62:5000/api/vehicle-check';
-  final String historyUrl = 'http://192.168.1.62:5000/api/security-gate-history';
+  final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
+  final String historyUrl = 'https://mg-vts-backend.onrender.com/api/security-gate-history';
 
   @override
   void initState() {

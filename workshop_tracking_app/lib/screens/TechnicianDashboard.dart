@@ -123,42 +123,39 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
     }
   }
 
-  Map<String, dynamic>? _buildRequestBody(String vehicleNumber) {
-    final body = {
-      'vehicleNumber': vehicleNumber,
-      'stage': selectedStage,
-      'eventType': eventType,
-      'role': 'Technician',
-    };
+Map<String, dynamic>? _buildRequestBody(String vehicleNumber) {
+  final Map<String, dynamic> body = {
+    'vehicleNumber': vehicleNumber,
+    'stage': selectedStage,
+    'eventType': eventType,
+    'role': 'Technician',
+  };
 
-    // Handling 'bayWork' stage
-    if (selectedStage == 'bayWork') {
-      // Validation for 'Start' event
-      if (eventType == 'Start' &&
-          (workTypeController.text.trim().isEmpty || bayNumberController.text.trim().isEmpty)) {
-        showError('Please enter both work type and bay number');
+  if (selectedStage == 'bayWork') {
+    if (eventType == 'Start' &&
+        (workTypeController.text.trim().isEmpty || bayNumberController.text.trim().isEmpty)) {
+      showError('Please enter both work type and bay number');
+      return null;
+    }
+    if (eventType == 'AdditionalWorkNeeded') {
+      if (additionalWorkController.text.trim().isEmpty) {
+        showError('Please describe the additional work needed');
         return null;
       }
-
-      // Handling 'AdditionalWorkNeeded' event
-      if (eventType == 'AdditionalWorkNeeded') {
-        if (additionalWorkController.text.trim().isEmpty) {
-          showError('Please describe the additional work needed');
-          return null;
-        }
-        // Convert the additional work description to a JSON string
-        body['additionalData'] = json.encode({
-          'commentText': additionalWorkController.text.trim()
-        });
-      } else {
-        // If it's another event, like 'Start', assign workType and bayNumber
-        body['workType'] = workTypeController.text.trim();
-        body['bayNumber'] = bayNumberController.text.trim();
-      }
+      // CORRECT: nest commentText inside additionalData
+      body['additionalData'] = {
+        'commentText': additionalWorkController.text.trim(),
+      };
+    } else {
+      body['workType'] = workTypeController.text.trim();
+      body['bayNumber'] = bayNumberController.text.trim();
     }
-
-    return body;
   }
+
+  return body;
+}
+
+
 
   void _handleSuccess() {
     if (!mounted) return;
@@ -219,11 +216,16 @@ class _TechnicianDashboardState extends State<TechnicianDashboard> {
             onPressed: () {
               Navigator.pop(context);
               setState(() {
-                vehicleController.text = vehicleNumber;
-                selectedStage = 'bayWork';
-                eventType = 'AdditionalWorkNeeded';
-              });
-              submitData();
+  vehicleController.text = vehicleNumber;
+  selectedStage = 'bayWork';
+  eventType = 'AdditionalWorkNeeded';
+});
+
+// Delay submission to allow state update to take effect
+Future.delayed(Duration(milliseconds: 100), () {
+  submitData();
+});
+
             },
             child: const Text('Submit'),
           ),

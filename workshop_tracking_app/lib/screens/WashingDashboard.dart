@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // MG Automobile Theme Constants
 const mgPrimaryColor = Color(0xFFE4002B); // MG's signature red
@@ -60,32 +62,299 @@ final mgTheme = ThemeData(
   ),
 );
 
+
+class VehicleWashingData {
+  final String vehicleNumber;
+  final String serviceAdvisorName;
+  final String serviceType;
+  final DateTime dateTime;
+  final String status;
+  final String? startTime;
+  final String? endTime;
+  final bool isCompleted;
+
+  VehicleWashingData({
+    required this.vehicleNumber,
+    required this.serviceAdvisorName, 
+    required this.serviceType,
+    required this.dateTime,
+    required this.status,
+    this.startTime,
+    this.endTime,
+    this.isCompleted = false,
+  });
+
+  factory VehicleWashingData.fromJson(Map<String, dynamic> json) {
+    return VehicleWashingData(
+      vehicleNumber: json['vehicleNumber']?.toString() ?? '',
+      serviceAdvisorName: json['serviceAdvisor']?.toString() ?? '',
+      serviceType: json['washingType']?.toString() ?? 'Paid',
+      dateTime: DateTime.tryParse(json['dateTime']?.toString() ?? '') ?? DateTime.now(),
+      status: json['status']?.toString() ?? 'Not Started',
+      startTime: json['startTime']?.toString(),
+      endTime: json['endTime']?.toString(),
+      isCompleted: json['isCompleted'] ?? false,
+    );
+  }
+}
+
 class WashingDashboard extends StatefulWidget {
   final String token;
-  final VoidCallback onLogout; // Added this line
+  final VoidCallback onLogout;
 
   const WashingDashboard({
     Key? key, 
     required this.token,
-    required this.onLogout, // Added this parameter
+    required this.onLogout,
   }) : super(key: key);
 
   @override
   State<WashingDashboard> createState() => _WashingDashboardState();
 }
 
-class _WashingDashboardState extends State<WashingDashboard> {
+class _WashingDashboardState extends State<WashingDashboard> with SingleTickerProviderStateMixin {
+  bool isLoading = true;
+  String? error;
+  List<VehicleWashingData> vehicles = [];
+  Set<String> inProgressVehicles = {};
+  Set<String> completedVehicles = {};
   String? scannedVehicleNumber;
-  String eventType = 'Start';
-  bool isLoading = false;
-
-  final vehicleController = TextEditingController();
-  final backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
-
+  late TabController _tabController;
+  final backendUrl = 'https://mg-vts-backend.onrender.com/api';
+  
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _loadVehicleStates();
+    fetchWashingSummary();
+  }
+  
   @override
   void dispose() {
-    vehicleController.dispose();
+    _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadVehicleStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      inProgressVehicles = Set.from(prefs.getStringList('inProgressVehicles') ?? []);
+      completedVehicles = Set.from(prefs.getStringList('completedVehicles') ?? []);
+    });
+  }
+
+  Future<void> _saveVehicleStates() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('inProgressVehicles', inProgressVehicles.toList());
+    await prefs.setStringList('completedVehicles', completedVehicles.toList());
+  }
+
+  Future<void> fetchWashingSummary() async {
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse('$backendUrl/washing-summary'),
+        headers: {'Authorization': 'Bearer ${widget.token}'},
+      );
+
+      if (response.statusCode == 200) {
+        final dynamic responseData = json.decode(response.body);
+        List<dynamic> vehiclesList = responseData is List ? responseData : [];
+
+        setState(() {
+          vehicles = vehiclesList.map((v) => VehicleWashingData.fromJson(v)).toList();
+          
+          // Update vehicle states based on local storage
+          vehicles = vehicles.map((vehicle) {
+            if (inProgressVehicles.contains(vehicle.vehicleNumber)) {
+              return VehicleWashingData(
+                vehicleNumber: vehicle.vehicleNumber,
+                serviceAdvisorName: vehicle.serviceAdvisorName,
+                serviceType: vehicle.serviceType,
+                dateTime: vehicle.dateTime,
+                status: 'In Progress',
+                startTime: vehicle.startTime,
+                endTime: null,
+                isCompleted: false,
+              );
+            } else if (completedVehicles.contains(vehicle.vehicleNumber)) {
+              return VehicleWashingData(
+                vehicleNumber: vehicle.vehicleNumber,
+                serviceAdvisorName: vehicle.serviceAdvisorName,
+                serviceType: vehicle.serviceType,
+                dateTime: vehicle.dateTime,
+                status: 'Completed',
+                startTime: vehicle.startTime,
+                endTime: vehicle.endTime,
+                isCompleted: true,
+              );
+            }
+            return vehicle;
+          }).toList();
+        });
+      } else {
+        setState(() {
+          error = 'Failed to load data: ${response.statusCode}';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        error = 'Error fetching data: ${e.toString()}';
+      });
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> scanQRCode() async {
+    final barcode = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (context) => const QRScannerScreen()),
+    );
+    
+    if (barcode != null && mounted) {
+      setState(() {
+        scannedVehicleNumber = barcode;
+      });
+      
+      final vehicleIndex = vehicles.indexWhere((v) => v.vehicleNumber == barcode);
+      if (vehicleIndex != -1) {
+        _handleVehicleAction(vehicles[vehicleIndex]);
+      } else {
+        showError('Vehicle not found in washing queue');
+      }
+    }
+  }
+
+  void _handleVehicleAction(VehicleWashingData vehicle) {
+    if (vehicle.isCompleted) {
+      _showRestartConfirmationDialog(vehicle);
+    } else {
+      final bool isInProgress = inProgressVehicles.contains(vehicle.vehicleNumber);
+      if (isInProgress) {
+        _showConfirmationDialog(
+          'End Washing',
+          'Do you want to end washing for ${vehicle.vehicleNumber}?',
+          () => _updateWashingStatus(vehicle.vehicleNumber, 'End'),
+        );
+      } else {
+        _showConfirmationDialog(
+          'Start Washing',
+          'Do you want to start washing ${vehicle.vehicleNumber}?',
+          () => _updateWashingStatus(vehicle.vehicleNumber, 'Start'),
+        );
+      }
+    }
+  }
+
+  void _showRestartConfirmationDialog(VehicleWashingData vehicle) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restart Washing'),
+        content: Text('Are you sure you want to wash ${vehicle.vehicleNumber} again?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _updateWashingStatus(vehicle.vehicleNumber, 'Start');
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showConfirmationDialog(String title, String message, VoidCallback onConfirm) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              onConfirm();
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateWashingStatus(String vehicleNumber, String eventType) async {
+    setState(() => isLoading = true);
+    try {
+      final response = await http.post(
+        Uri.parse('$backendUrl/vehicle-check'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.token}',
+        },
+        body: json.encode({
+          'vehicleNumber': vehicleNumber,
+          'stage': 'washing',
+          'eventType': eventType,
+          'role': 'Washer',
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          if (eventType == 'Start') {
+            inProgressVehicles.add(vehicleNumber);
+            completedVehicles.remove(vehicleNumber);
+          } else {
+            inProgressVehicles.remove(vehicleNumber);
+            completedVehicles.add(vehicleNumber);
+          }
+        });
+        await _saveVehicleStates();
+        fetchWashingSummary();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(eventType == 'Start' 
+              ? 'Washing started successfully' 
+              : 'Washing completed successfully'),
+            backgroundColor: mgSuccessColor,
+          ),
+        );
+      } else {
+        showError('Error: ${response.body}');
+      }
+    } catch (e) {
+      showError('Operation failed: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  void showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: mgErrorColor,
+      ),
+    );
   }
 
   void _handleLogout() {
@@ -111,417 +380,235 @@ class _WashingDashboardState extends State<WashingDashboard> {
     );
   }
 
-  Future<void> scanQRCode() async {
-    final barcode = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (context) => const QRScannerScreen()),
-    );
-    if (barcode != null && mounted) {
-      setState(() {
-        scannedVehicleNumber = barcode;
-        vehicleController.text = barcode;
-      });
-    }
-  }
-
-  Future<void> submitWashingStatus() async {
-    if (isLoading) return;
-
-    setState(() => isLoading = true);
-
-    try {
-      final vehicleNumber = scannedVehicleNumber ?? vehicleController.text.trim();
-      if (vehicleNumber.isEmpty) {
-        showError('Please scan or enter a vehicle number');
-        setState(() => isLoading = false);
-        return;
-      }
-
-      final response = await http.post(
-        Uri.parse(backendUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${widget.token}',
-        },
-        body: json.encode({
-          'vehicleNumber': vehicleNumber,
-          'stage': 'washing',
-          'eventType': eventType,
-          'role': 'Washer',
-        }),
+  Widget _buildActiveVehiclesList() {
+    final activeVehicles = vehicles.where((v) => 
+        !v.isCompleted && 
+        (v.status == 'Not Started' || 
+         v.status == 'In Progress' || 
+         inProgressVehicles.contains(v.vehicleNumber))
+    ).toList();
+    
+    if (activeVehicles.isEmpty) {
+      return const Center(
+        child: Text('No vehicles in washing queue', style: TextStyle(fontSize: 16)),
       );
-
-      if (response.statusCode == 200) {
-        _handleSuccess();
-      } else {
-        showError('Error: ${response.body}');
-      }
-    } catch (e) {
-      showError('Submission failed: ${e.toString()}');
-    } finally {
-      if (mounted) setState(() => isLoading = false);
     }
-  }
-
-  void _handleSuccess() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Washing status updated'),
-        backgroundColor: mgSuccessColor,
-      ),
-    );
-    vehicleController.clear();
-    setState(() {
-      scannedVehicleNumber = null;
-      eventType = 'Start';
-    });
-  }
-
-  void showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: mgErrorColor,
-      ),
+    
+    return ListView.builder(
+      itemCount: activeVehicles.length,
+      itemBuilder: (context, index) {
+        final vehicle = activeVehicles[index];
+        final isInProgress = inProgressVehicles.contains(vehicle.vehicleNumber);
+        
+        return _buildVehicleCard(
+          vehicle,
+          isInProgress ? 'In Progress' : 'Pending',
+          isInProgress ? mgWarningColor : mgAccentColor,
+          isInProgress ? 'END WASH' : 'START WASH',
+          isInProgress ? mgSuccessColor : mgPrimaryColor,
+          () => _handleVehicleAction(vehicle),
+        );
+      },
     );
   }
 
-  void _viewWashingHistory() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => WashingHistoryScreen(token: widget.token),
-      ),
+  Widget _buildCompletedVehiclesList() {
+    final completedVehiclesList = vehicles.where((v) => v.isCompleted).toList();
+    
+    if (completedVehiclesList.isEmpty) {
+      return const Center(
+        child: Text('No completed washing records', style: TextStyle(fontSize: 16)),
+      );
+    }
+    
+    return ListView.builder(
+      itemCount: completedVehiclesList.length,
+      itemBuilder: (context, index) {
+        final vehicle = completedVehiclesList[index];
+        return _buildVehicleCard(
+          vehicle,
+          'Completed',
+          mgSuccessColor,
+          'WASH AGAIN',
+          mgPrimaryColor,
+          () => _handleVehicleAction(vehicle),
+          showActionButton: true,
+        );
+      },
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      theme: mgTheme,
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('MG Washing Dashboard'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.history),
-              onPressed: _viewWashingHistory,
-              tooltip: 'Washing History',
-            ),
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: _handleLogout,
-              tooltip: 'Logout',
-            ),
-          ],
-        ),
-        body: SingleChildScrollView(
+  Widget _buildVehicleCard(
+    VehicleWashingData vehicle,
+    String statusText,
+    Color statusColor,
+    String buttonText,
+    Color buttonColor,
+    VoidCallback onAction, {
+    bool showActionButton = true,
+  }) {
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: InkWell(
+        onTap: onAction,
+        child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // MG Brand Header
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: const Text(
-                  'Vehicle Washing Station',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: mgPrimaryColor,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const Divider(color: mgPrimaryColor),
-
-              // Vehicle Input Section
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: vehicleController,
-                      decoration: const InputDecoration(
-                        labelText: 'Vehicle Number',
-                        labelStyle: TextStyle(color: mgTextColor),
-                        prefixIcon: Icon(Icons.directions_car, color: mgPrimaryColor),
-                      ),
-                      readOnly: true,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: scanQRCode,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: mgSecondaryColor,
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.qr_code_scanner),
-                        SizedBox(width: 4),
-                        Text('SCAN'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              // Action Selection
-              const Text(
-                'SELECT ACTION:',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: mgTextColor,
-                  fontSize: 16,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Radio<String>(
-                    value: 'Start',
-                    groupValue: eventType,
-                    onChanged: (value) => setState(() => eventType = value!),
-                    activeColor: mgPrimaryColor,
-                  ),
-                  const Text('Start Washing'),
-                  const SizedBox(width: 20),
-                  Radio<String>(
-                    value: 'End',
-                    groupValue: eventType,
-                    onChanged: (value) => setState(() => eventType = value!),
-                    activeColor: mgPrimaryColor,
-                  ),
-                  const Text('End Washing'),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Submit Button
-              ElevatedButton(
-                onPressed: isLoading ? null : submitWashingStatus,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: eventType == 'Start' ? mgPrimaryColor : mgSuccessColor,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : Text(
-                        eventType == 'Start' ? 'START WASHING' : 'END WASHING',
+                  Row(
+                    children: [
+                      const Icon(Icons.directions_car, color: mgPrimaryColor),
+                      const SizedBox(width: 8),
+                      Text(
+                        vehicle.vehicleNumber,
                         style: const TextStyle(
-                          fontSize: 18,
                           fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: mgSecondaryColor,
                         ),
                       ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ),
+              const Divider(height: 20),
+              Row(
+                children: [
+                  const Icon(Icons.person, size: 16, color: mgTextColor),
+                  const SizedBox(width: 4),
+                  Text('Advisor: ${vehicle.serviceAdvisorName}', 
+                      style: const TextStyle(color: mgTextColor)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.calendar_today, size: 16, color: mgTextColor),
+                  const SizedBox(width: 4),
+                  Text('Date: ${DateFormat('dd MMM yyyy').format(vehicle.dateTime)}', 
+                      style: const TextStyle(color: mgTextColor)),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.payments, size: 16, color: mgTextColor),
+                      const SizedBox(width: 4),
+                      Text('Service: ${vehicle.serviceType}', 
+                          style: const TextStyle(color: mgTextColor)),
+                    ],
+                  ),
+                  if (showActionButton)
+                    ElevatedButton(
+                      onPressed: onAction,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: buttonColor,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      ),
+                      child: Text(buttonText),
+                    ),
+                ],
+              ),
+              if (vehicle.startTime != null && vehicle.endTime != null) ...[
+                const SizedBox(height: 8),
+                const Divider(height: 8),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.timer, size: 16, color: mgTextColor),
+                    const SizedBox(width: 4),
+                    Text('Start: ${vehicle.startTime}', 
+                        style: const TextStyle(color: mgTextColor)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.timer_off, size: 16, color: mgTextColor),
+                    const SizedBox(width: 4),
+                    Text('End: ${vehicle.endTime}', 
+                        style: const TextStyle(color: mgTextColor)),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
   }
-}
-
-class WashingHistoryScreen extends StatefulWidget {
-  final String token;
-  const WashingHistoryScreen({Key? key, required this.token}) : super(key: key);
-
-  @override
-  State<WashingHistoryScreen> createState() => _WashingHistoryScreenState();
-}
-
-class _WashingHistoryScreenState extends State<WashingHistoryScreen> {
-  List<dynamic> inProgress = [];
-  List<dynamic> completed = [];
-  bool isLoading = true;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchWashingHistory();
-  }
-
-  Future<void> _fetchWashingHistory() async {
-    setState(() {
-      isLoading = true;
-      error = null;
-    });
-
-    try {
-      final response = await http.get(
-        Uri.parse('http://192.168.9.77:5000/api/washing-history'),
-        headers: {
-          'Authorization': 'Bearer ${widget.token}',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          inProgress = data['inProgress'] ?? [];
-          completed = data['completed'] ?? [];
-        });
-      } else {
-        setState(() {
-          error = 'Failed to load data: ${response.statusCode}';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        error = 'Error fetching data: ${e.toString()}';
-      });
-    } finally {
-      setState(() {
-        isLoading = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MG Washing History'),
-      ),
-      body: _buildBody(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _fetchWashingHistory,
-        backgroundColor: mgPrimaryColor,
-        child: const Icon(Icons.refresh),
-      ),
-    );
-  }
-
-  Widget _buildBody() {
-    if (isLoading) {
-      return Center(child: CircularProgressIndicator(color: mgPrimaryColor));
-    }
-
-    if (error != null) {
-      return Center(
-        child: Text(
-          error!,
-          style: const TextStyle(color: mgErrorColor),
-        ),
-      );
-    }
-
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          Container(
-            color: mgPrimaryColor,
-            child: const TabBar(
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white70,
-              indicatorColor: Colors.white,
-              tabs: [
-                Tab(text: 'In Progress'),
-                Tab(text: 'Completed'),
-              ],
-            ),
+        title: const Text('MG Washing Dashboard'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            onPressed: scanQRCode,
+            tooltip: 'Scan QR',
           ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _buildWashingList(inProgress, false),
-                _buildWashingList(completed, true),
-              ],
-            ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: fetchWashingSummary,
+            tooltip: 'Refresh',
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _handleLogout,
+            tooltip: 'Logout',
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildWashingList(List<dynamic> items, bool showDuration) {
-    if (items.isEmpty) {
-      return Center(
-        child: Text(
-          'No washing records found',
-          style: const TextStyle(color: mgTextColor),
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
+          tabs: const [
+            Tab(text: 'Pending & In Progress'),
+            Tab(text: 'Completed'),
+          ],
         ),
-      );
-    }
-
-    return ListView.builder(
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator(color: mgPrimaryColor))
+          : error != null
+              ? Center(child: Text(error!, style: const TextStyle(color: mgErrorColor)))
+              : TabBarView(
+                  controller: _tabController,
                   children: [
-                    const Icon(Icons.directions_car, color: mgPrimaryColor),
-                    const SizedBox(width: 8),
-                    Text(
-                      item['vehicleNumber'],
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: mgPrimaryColor,
-                      ),
-                    ),
+                    _buildActiveVehiclesList(),
+                    _buildCompletedVehiclesList(),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.access_time, size: 16, color: mgTextColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Started: ${item['startTime']}',
-                      style: const TextStyle(color: mgTextColor),
-                    ),
-                  ],
-                ),
-                if (showDuration && item['endTime'] != null) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.timer_off, size: 16, color: mgTextColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Ended: ${item['endTime']}',
-                        style: const TextStyle(color: mgTextColor),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.timer, size: 16, color: mgTextColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Duration: ${item['durationMinutes']} minutes',
-                        style: const TextStyle(
-                          color: mgTextColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
+      floatingActionButton: FloatingActionButton(
+        onPressed: scanQRCode,
+        backgroundColor: mgPrimaryColor,
+        child: const Icon(Icons.qr_code_scanner),
+      ),
     );
   }
 }
@@ -566,12 +653,39 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('MG Vehicle QR Scanner'),
+        title: const Text('Scan Vehicle QR Code'),
         backgroundColor: mgPrimaryColor,
       ),
-      body: MobileScanner(
-        controller: cameraController,
-        onDetect: _handleDetection,
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: cameraController,
+            onDetect: _handleDetection,
+          ),
+          Positioned.fill(
+            child: Container(
+              alignment: Alignment.center,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  border: Border.all(color: mgPrimaryColor, width: 3),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Text(
+                    'Position QR code here',
+                    style: TextStyle(
+                      color: Colors.white,
+                      backgroundColor: Colors.black54,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

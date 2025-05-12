@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema({
     phone: { type: String, required: true, unique: true },
     email: { type: String, default: null },
     role: { type: String, enum: allowedRoles, required: true },
-    team: { type: String, enum: ['A', 'B'], default: 'Default' },
+    team: { type: String, enum: ['A', 'B','None'], default: 'Default' },
     password: { type: String, required: true },
 }, {
     timestamps: true
@@ -34,39 +34,35 @@ const User = mongoose.model('User', userSchema);
 // ===== JWT Middleware =====
 const authMiddleware = async (req, res, next) => {
     try {
-      const authHeader = req.headers.authorization;
-      console.log("🔐 Incoming Auth Header:", authHeader);
-  
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ message: 'Authorization header missing or malformed' });
-      }
-  
-      const token = authHeader.split(' ')[1];
-  
-      // Decode the token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("✅ JWT Decoded:", decoded);
-  
-      const user = await User.findById(decoded.userId);
-      if (!user) {
-        return res.status(401).json({ message: 'User not found' });
-      }
-  
-      req.user = user;
-      next();
+        const authHeader = req.headers.authorization;
+        console.log("🔐 Incoming Auth Header:", authHeader);
+
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Authorization header missing or malformed' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log("✅ JWT Decoded:", decoded);
+
+        const user = await User.findById(decoded.userId);
+        if (!user) {
+            return res.status(401).json({ message: 'User not found' });
+        }
+
+        req.user = user;
+        next();
     } catch (error) {
-      console.error("❌ Token verification failed:", error.message);
-      return res.status(401).json({ message: 'Token is not valid' });
+        console.error("❌ Token verification failed:", error.message);
+        return res.status(401).json({ message: 'Token is not valid' });
     }
-  };
-  
+};
 
 // ===== JWT Token Generator =====
 const generateToken = (user) => {
     return jwt.sign(
         { userId: user._id, role: user.role },
-        process.env.JWT_SECRET,
-        { expiresIn: '7d' }
+        process.env.JWT_SECRET // Removed expiration
     );
 };
 
@@ -139,6 +135,7 @@ router.post('/login', async (req, res) => {
         }
     });
 });
+
 
 // ===== Protected Route Example =====
 router.get('/me', authMiddleware, async (req, res) => {

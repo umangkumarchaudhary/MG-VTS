@@ -40,6 +40,8 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
     const userId = req.user._id;
     const now = new Date();
     const TEN_MINUTES = 10 * 60 * 1000; // 10 minutes in milliseconds
+    const commentText = data.commentText;
+
 
 
     console.log('Parsed data:', { vehicleNumber, stage, eventType, role, userId, now });
@@ -183,25 +185,44 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
   
 
     case 'readyForWashing':
-      console.log('Handling Ready for Washing stage...');
-      if (eventType === 'Start') {
-        const lastStart = vehicle.readyForWashing?.startTime;
-        const canRestart = !lastStart || (now - new Date(lastStart)) > TEN_MINUTES;
+  console.log('Handling Ready for Washing stage...');
+  if (eventType === 'Start') {
+    const lastStart = vehicle.readyForWashing?.startTime;
+    const canRestart = !lastStart || (now - new Date(lastStart)) > TEN_MINUTES;
+
+    if (!canRestart) {
+      console.log('Restart not allowed. Last start time:', lastStart);
+      return res.status(400).json({
+        message: 'You must wait 10 minutes before restarting Ready for Washing.'
+      });
+    }
+
+    const { washingType } = data;
+    console.log('Washing Type from client:', washingType);
+
+    if (!washingType || !['Free', 'Paid'].includes(washingType)) {
+      return res.status(400).json({
+        message: 'You must provide washingType as either "Free" or "Paid".'
+      });
+    }
+
+    vehicle.readyForWashing = {
+      startTime: now,
+      performedBy: userId,
+      isCompleted: false,
+      washingType
+    };
+
+    console.log('vehicle.readyForWashing set to:', vehicle.readyForWashing);
+
+    vehicle.history.push(createEvent(stage, eventType, userId, { washingType }));
+    console.log('Event pushed to history:', vehicle.history[vehicle.history.length - 1]);
+  }
+  break;
+
     
-        if (!canRestart) {
-          return res.status(400).json({
-            message: 'You must wait 10 minutes before restarting Ready for Washing.'
-          });
-        }
-    
-        console.log('Start event for Ready for Washing');
-        vehicle.readyForWashing = {
-          startTime: now,
-          performedBy: userId,
-          isCompleted: false
-        };
-      }
-      break;
+
+
 
       case 'bayAllocation':
         console.log('Handling Bay Allocation stage...');
@@ -282,15 +303,7 @@ case 'jobCardReceived':
       performedBy: userId,
       isCompleted: false
     };
-    
-    // Auto-close if washing starts
-  } else if (eventType === 'End') {
-    console.log('End event for Job Card Received');
-    if (!vehicle.jobCardReceived) vehicle.jobCardReceived = {};
-    vehicle.jobCardReceived.endTime = now;
-    vehicle.jobCardReceived.isCompleted = true;
-  }
-  break;
+  } 
     
 
       
@@ -641,6 +654,48 @@ router.get('/vehicles/:vehicleNumber/full-journey', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching vehicle journey:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// GET /vehicle-history/:vehicleNumber
+router.get('/vehicle-history/:vehicleNumber', authMiddleware, async (req, res) => {
+  try {
+    const { vehicleNumber } = req.params;
+    if (!vehicleNumber) {
+      return res.status(400).json({ message: 'Vehicle number is required' });
+    }
+
+    // Find the vehicle by vehicleNumber
+    const vehicle = await Vehicle.findOne({ vehicleNumber })
+      .populate('history.performedBy', 'name email') // Optional: populate user info
+      .lean();
+
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found' });
+    }
+
+    // Get history, sort from latest to oldest
+    const history = (vehicle.history || [])
+      .slice() // clone array
+      .sort((a, b) => new Date(b.time || b.timestamp || b.startTime) - new Date(a.time || a.timestamp || a.startTime));
+
+    // Format output for each history entry
+    const formattedHistory = history.map(event => ({
+      stage: event.stage,
+      eventType: event.eventType,
+      performedBy: event.performedBy?.name || event.performedBy || 'Unknown',
+      time: event.time || event.timestamp || event.startTime,
+      comment: event.commentText || event.comment || undefined,
+      extra: event.extra || undefined
+    }));
+
+    res.json({
+      vehicleNumber: vehicle.vehicleNumber,
+      history: formattedHistory
+    });
+  } catch (error) {
+    console.error('Error in /vehicle-history/:vehicleNumber:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

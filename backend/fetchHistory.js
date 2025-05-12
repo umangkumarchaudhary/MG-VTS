@@ -789,9 +789,210 @@ router.get('/work-in-progress', async (req, res) => {
 });
 
 
+// GET /washing-summary
+router.get('/washing-summary', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({ 'readyForWashing.startTime': { $exists: true } })
+      .populate('readyForWashing.performedBy', 'name role');
+
+    const summary = vehicles.map(vehicle => ({
+      vehicleNumber: vehicle.vehicleNumber,
+      dateTime: vehicle.readyForWashing.startTime,
+      serviceAdvisor: vehicle.readyForWashing.performedBy?.name || 'N/A',
+      washingType: vehicle.readyForWashing.washingType || 'N/A',
+    }));
+
+    res.json(summary);
+  } catch (err) {
+    console.error('Error fetching washing summary:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+router.get('/jobcard-concerns/:vehicleNumber', async (req, res) => {
+  const { vehicleNumber } = req.params;
+
+  try {
+    const vehicle = await Vehicle.findOne({ vehicleNumber });
+
+    if (!vehicle) {
+      return res.status(404).json({ message: 'Vehicle not found.' });
+    }
+
+    // Use vehicle.history instead of vehicle.events
+    if (!Array.isArray(vehicle.history) || vehicle.history.length === 0) {
+      return res.status(404).json({ message: 'No history found for this vehicle.' });
+    }
+
+    const jobCardStartEvent = vehicle.history.find(
+      (event) =>
+        event.stage === 'jobCardCreation' &&
+        event.eventType === 'Start' &&
+        event.additionalData?.commentText
+    );
+
+    if (!jobCardStartEvent) {
+      return res.status(404).json({ message: 'No concern found for this vehicle.' });
+    }
+
+    const advisor = await User.findById(jobCardStartEvent.performedBy).select('name');
+
+    res.json({
+      vehicleNumber: vehicle.vehicleNumber,
+      concern: jobCardStartEvent.additionalData.commentText,
+      serviceAdvisor: advisor?.name || 'Unknown',
+      addedAt: jobCardStartEvent.timestamp,
+    });
+
+  } catch (error) {
+    console.error('Error fetching concern:', error);
+    res.status(500).json({ message: 'Server error while retrieving concern.' });
+  }
+});
+
+
+/**
+ * @route GET /api/history/bay-allocations
+ * @description Get all bay allocation records across all vehicles
+ * @returns {Array} All bay allocation records with complete details
+ */
+router.get('/history/bay-allocations', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({})
+      .populate('bayAllocation.performedBy', 'name email')
+      .populate('bayAllocation.technicians', 'name role')
+      .select('vehicleNumber bayAllocation');
+
+    const allAllocations = vehicles.flatMap(vehicle => 
+      vehicle.bayAllocation.map(allocation => ({
+        vehicleNumber: vehicle.vehicleNumber,
+        startTime: allocation.startTime,
+        performedBy: allocation.performedBy,
+        vehicleModel: allocation.vehicleModel,
+        serviceType: allocation.serviceType,
+        jobDescription: allocation.jobDescription,
+        itemDescription: allocation.itemDescription,
+        frtHours: allocation.frtHours,
+        technicians: allocation.technicians,
+        isFirstAllocation: allocation.isFirstAllocation
+      }))
+    );
+
+    res.json(allAllocations);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching bay allocations', error: error.message });
+  }
+});
 
 
 
+/**
+ * @route GET /api/history/expert-assignments
+ * @description Get all expert assignment records across all vehicles
+ * @returns {Array} All expert assignment records with complete details
+ */
+router.get('/history/expert-assignments', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({ 'assignExpert': { $exists: true } })
+      .populate('assignExpert.performedBy', 'name email')
+      .select('vehicleNumber assignExpert');
+
+    const expertAssignments = vehicles.map(vehicle => ({
+      vehicleNumber: vehicle.vehicleNumber,
+      startTime: vehicle.assignExpert.startTime,
+      performedBy: vehicle.assignExpert.performedBy,
+      expertName: vehicle.assignExpert.expertName,
+      isCompleted: vehicle.assignExpert.isCompleted,
+      endTime: vehicle.assignExpert.endTime || null
+    }));
+
+    res.json(expertAssignments);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching expert assignments', error: error.message });
+  }
+});
+
+/**
+ * @route GET /api/history/job-card-receipts
+ * @description Get all job card receipt records across all vehicles
+ * @returns {Array} All job card receipt records with complete details
+ */
+router.get('/history/job-card-receipts', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({ 'jobCardReceived': { $exists: true } })
+      .populate('jobCardReceived.performedBy', 'name email')
+      .select('vehicleNumber jobCardReceived');
+
+    const jobCardReceipts = vehicles.map(vehicle => ({
+      vehicleNumber: vehicle.vehicleNumber,
+      startTime: vehicle.jobCardReceived.startTime,
+      performedBy: vehicle.jobCardReceived.performedBy,
+      isCompleted: vehicle.jobCardReceived.isCompleted,
+      endTime: vehicle.jobCardReceived.endTime || null
+    }));
+
+    res.json(jobCardReceipts);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching job card receipts', error: error.message });
+  }
+});
+
+
+/**
+ * @route GET /api/history/all
+ * @description Get complete history across all stages and vehicles
+ * @returns {Object} Complete history organized by stage
+ */
+router.get('/history/all', async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find({})
+      .populate('bayAllocation.performedBy', 'name email')
+      .populate('bayAllocation.technicians', 'name role')
+      .populate('assignExpert.performedBy', 'name email')
+      .populate('jobCardReceived.performedBy', 'name email');
+
+    const response = {
+      bayAllocations: vehicles.flatMap(vehicle => 
+        vehicle.bayAllocation.map(allocation => ({
+          vehicleNumber: vehicle.vehicleNumber,
+          startTime: allocation.startTime,
+          performedBy: allocation.performedBy,
+          vehicleModel: allocation.vehicleModel,
+          serviceType: allocation.serviceType,
+          jobDescription: allocation.jobDescription,
+          itemDescription: allocation.itemDescription,
+          frtHours: allocation.frtHours,
+          technicians: allocation.technicians,
+          isFirstAllocation: allocation.isFirstAllocation
+        }))
+      ),
+      expertAssignments: vehicles
+        .filter(v => v.assignExpert)
+        .map(vehicle => ({
+          vehicleNumber: vehicle.vehicleNumber,
+          startTime: vehicle.assignExpert.startTime,
+          performedBy: vehicle.assignExpert.performedBy,
+          expertName: vehicle.assignExpert.expertName,
+          isCompleted: vehicle.assignExpert.isCompleted,
+          endTime: vehicle.assignExpert.endTime || null
+        })),
+      jobCardReceipts: vehicles
+        .filter(v => v.jobCardReceived)
+        .map(vehicle => ({
+          vehicleNumber: vehicle.vehicleNumber,
+          startTime: vehicle.jobCardReceived.startTime,
+          performedBy: vehicle.jobCardReceived.performedBy,
+          isCompleted: vehicle.jobCardReceived.isCompleted,
+          endTime: vehicle.jobCardReceived.endTime || null
+        }))
+    };
+
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching complete history', error: error.message });
+  }
+});
 
 
 
