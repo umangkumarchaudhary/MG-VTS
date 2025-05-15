@@ -376,27 +376,74 @@ router.get('/vehicle/pickup-drop-summary', authMiddleware, async (req, res) => {
 // ✅ Driver-only history check (no need for securityGate)
 router.get('/vehicle/driver-history', authMiddleware, async (req, res) => {
   try {
+    // Find vehicles with either pickup or drop records
     const vehicles = await Vehicle.find({
       $or: [
         { 'pickupDrop.startTime': { $exists: true } },
         { 'driverDrop.endTime': { $exists: true } }
       ]
-    }).lean();
+    })
+    .populate('pickupDrop.performedBy', 'name phone') // Populate driver info for pickup
+    .populate('driverDrop.endedBy', 'name phone')     // Populate driver info for drop
+    .lean();
 
-    const result = vehicles.map(v => {
+    // Format the response data
+    const result = vehicles.map(vehicle => {
       return {
-        vehicleNumber: v.vehicleNumber,
-        pickupTime: v.pickupDrop?.startTime ? new Date(v.pickupDrop.startTime).toLocaleString() : null,
-        pickupKM: v.pickupDrop?.pickupKM || null,
-        dropTime: v.driverDrop?.endTime ? new Date(v.driverDrop.endTime).toLocaleString() : null,
-        dropKM: v.driverDrop?.dropKM || null // ✅ Include dropKM
+        vehicleNumber: vehicle.vehicleNumber,
+        
+        // Pickup Information
+        pickup: vehicle.pickupDrop ? {
+          time: vehicle.pickupDrop.startTime 
+            ? new Date(vehicle.pickupDrop.startTime).toLocaleString() 
+            : null,
+          km: vehicle.pickupDrop.pickupKM || null,
+          driver: vehicle.pickupDrop.performedBy 
+            ? { 
+                name: vehicle.pickupDrop.performedBy.name,
+                phone: vehicle.pickupDrop.performedBy.phone
+              }
+            : null
+        } : null,
+        
+        // Drop Information
+        drop: vehicle.driverDrop ? {
+          time: vehicle.driverDrop.endTime 
+            ? new Date(vehicle.driverDrop.endTime).toLocaleString() 
+            : null,
+          km: vehicle.driverDrop.dropKM || null,
+          driver: vehicle.driverDrop.endedBy 
+            ? { 
+                name: vehicle.driverDrop.endedBy.name,
+                phone: vehicle.driverDrop.endedBy.phone
+              }
+            : null,
+          isCompleted: vehicle.driverDrop.isCompleted || false
+        } : null,
+        
+        // Calculated fields
+        totalKM: vehicle.pickupDrop?.pickupKM && vehicle.driverDrop?.dropKM
+          ? vehicle.driverDrop.dropKM - vehicle.pickupDrop.pickupKM
+          : null,
+        
+        // History reference
+        historyId: vehicle._id
       };
     });
 
-    res.status(200).json(result);
+    res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result
+    });
+
   } catch (err) {
     console.error('Error in driver-history route:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Internal server error',
+      error: err.message 
+    });
   }
 });
 
@@ -567,6 +614,65 @@ router.get('/dashboard/status', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+
+// Add this route to your existing routes file
+// GET /api/vehicle/driver-performance
+router.get('/driver-performance', authMiddleware, async (req, res) => {
+  try {
+    const vehicles = await Vehicle.find().populate('pickupDrop.performedBy').populate('driverDrop.endedBy');
+
+    const driverStats = {};
+
+    vehicles.forEach(vehicle => {
+      const pickup = vehicle.pickupDrop;
+      const security = vehicle.securityGate;
+      const drop = vehicle.driverDrop;
+
+      if (!pickup || !security || !drop) return;
+
+      const driverId = pickup.performedBy?._id?.toString();
+      const driverName = pickup.performedBy?.name || 'Unknown Driver';
+
+      if (!driverStats[driverId]) {
+        driverStats[driverId] = {
+          driverId,
+          driverName,
+          totalPickups: 0,
+          trips: []
+        };
+      }
+
+      // Compute distances
+      const pickupKM = pickup.pickupKM || 0;
+      const securityInKM = security.inKM || 0;
+      const securityOutKM = security.outKM || 0;
+      const dropKM = drop.dropKM || 0;
+
+      const pickupDistance = securityInKM - pickupKM;
+      const dropDistance = dropKM - securityOutKM;
+
+      driverStats[driverId].totalPickups += 1;
+      driverStats[driverId].trips.push({
+        vehicleNumber: vehicle.vehicleNumber,
+        pickupTime: pickup.startTime,
+        securityGateEntryTime: security.startTime,
+        pickupKM,
+        securityInKM,
+        dropKM,
+        securityOutKM,
+        pickupDistance,
+        dropDistance,
+      });
+    });
+
+    const result = Object.values(driverStats);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Error in driver-performance:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 
 // Enhanced status determination logic
 function determineVehicleStatus(vehicle) {

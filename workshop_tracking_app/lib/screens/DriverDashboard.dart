@@ -19,7 +19,8 @@ class DriverDashboard extends StatefulWidget {
 
 class _DriverDashboardState extends State<DriverDashboard> {
   final TextEditingController vehicleController = TextEditingController();
-  final TextEditingController kmController = TextEditingController();
+  final TextEditingController pickupKmController = TextEditingController();
+  final TextEditingController dropKmController = TextEditingController();
   bool isLoading = false;
 
   final String backendUrl = 'https://mg-vts-backend.onrender.com/api/vehicle-check';
@@ -38,10 +39,17 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
   Future<void> sendPickup() async {
     final vehicleNumber = vehicleController.text.trim();
-    final pickupKM = kmController.text.trim();
+    final pickupKM = pickupKmController.text.trim();
 
     if (vehicleNumber.isEmpty || pickupKM.isEmpty) {
       showSnackBar('Please enter vehicle number and pickup KM');
+      return;
+    }
+
+    // Convert KM to number
+    final pickupKMValue = int.tryParse(pickupKM);
+    if (pickupKMValue == null) {
+      showSnackBar('Please enter a valid number for pickup KM');
       return;
     }
 
@@ -50,15 +58,28 @@ class _DriverDashboardState extends State<DriverDashboard> {
       'stage': 'pickupDrop',
       'eventType': 'Start',
       'role': 'Driver',
-      'pickupKM': pickupKM,
+      'pickupKM': pickupKMValue, // Send as number
     });
   }
 
   Future<void> sendDropOff() async {
     final vehicleNumber = vehicleController.text.trim();
+    final dropKM = dropKmController.text.trim();
 
     if (vehicleNumber.isEmpty) {
       showSnackBar('Please enter or scan vehicle number');
+      return;
+    }
+
+    if (dropKM.isEmpty) {
+      showSnackBar('Please enter drop KM');
+      return;
+    }
+
+    // Convert KM to number
+    final dropKMValue = int.tryParse(dropKM);
+    if (dropKMValue == null) {
+      showSnackBar('Please enter a valid number for drop KM');
       return;
     }
 
@@ -67,6 +88,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
       'stage': 'driverDrop',
       'eventType': 'End',
       'role': 'Driver',
+      'dropKM': dropKMValue, // Send as number
     });
   }
 
@@ -86,7 +108,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
       if (response.statusCode == 200) {
         showSnackBar(result['message'] ?? 'Success', success: true);
         vehicleController.clear();
-        kmController.clear();
+        pickupKmController.clear();
+        dropKmController.clear();
       } else {
         showSnackBar(result['error'] ?? 'Failed');
       }
@@ -114,46 +137,27 @@ class _DriverDashboardState extends State<DriverDashboard> {
   }
 
   void _handleLogout() {
-  print('[DEBUG] Logout button pressed'); // Debug statement 1
-  
-  showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Logout'),
-      content: const Text('Are you sure you want to logout?'),
-      actions: [
-        TextButton(
-          onPressed: () {
-            print('[DEBUG] Logout cancelled'); // Debug statement 2
-            Navigator.pop(context);
-          },
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () async {
-            print('[DEBUG] Logout confirmed'); // Debug statement 3
-            
-            // First close the dialog
-            Navigator.pop(context);
-            
-            // Add a small delay to ensure dialog is fully dismissed
-            await Future.delayed(const Duration(milliseconds: 100));
-            
-            // Check if widget is still mounted
-            if (!mounted) {
-              print('[DEBUG] Widget not mounted, aborting logout');
-              return;
-            }
-            
-            print('[DEBUG] Calling onLogout callback');
-            widget.onLogout();
-          },
-          child: const Text('Logout'),
-        ),
-      ],
-    ),
-  );
-}
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onLogout();
+            },
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -173,10 +177,11 @@ class _DriverDashboardState extends State<DriverDashboard> {
           ),
         ],
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            // Vehicle Number Input
             TextField(
               controller: vehicleController,
               decoration: const InputDecoration(
@@ -192,9 +197,13 @@ class _DriverDashboardState extends State<DriverDashboard> {
               icon: const Icon(Icons.qr_code_scanner),
               label: const Text('Scan Vehicle QR'),
             ),
+            
+            // Pickup Section
             const SizedBox(height: 20),
+            const Text('Pickup Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
             TextField(
-              controller: kmController,
+              controller: pickupKmController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: 'Pickup KM',
@@ -202,23 +211,39 @@ class _DriverDashboardState extends State<DriverDashboard> {
                 border: OutlineInputBorder(),
               ),
             ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: isLoading ? null : sendPickup,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+              ),
+              child: isLoading
+                  ? const CircularProgressIndicator()
+                  : const Text('Record Pickup'),
+            ),
+            
+            // Drop Section
             const SizedBox(height: 30),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: isLoading ? null : sendPickup,
-                  child: isLoading
-                      ? const CircularProgressIndicator()
-                      : const Text('Start Pickup'),
-                ),
-                ElevatedButton(
-                  onPressed: isLoading ? null : sendDropOff,
-                  child: isLoading
-                      ? const CircularProgressIndicator()
-                      : const Text('End Drop'),
-                ),
-              ],
+            const Text('Drop Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: dropKmController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Drop KM',
+                prefixIcon: Icon(Icons.speed),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: isLoading ? null : sendDropOff,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+              ),
+              child: isLoading
+                  ? const CircularProgressIndicator()
+                  : const Text('Record Drop'),
             ),
           ],
         ),
@@ -310,38 +335,66 @@ class _DriverPickupDropSummaryState extends State<DriverPickupDropSummary> {
   }
 
   Future<void> fetchSummary() async {
-    try {
-      final response = await http.get(
-        Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle/driver-history'),
-        headers: {
-          'Authorization': 'Bearer ${widget.token}',
-        },
-      );
+  print('🔍 Starting fetchSummary...');
+  print('📦 Token: ${widget.token}');
 
-      if (response.statusCode == 200) {
-        setState(() {
-          summary = json.decode(response.body);
-          isLoading = false;
-        });
-      } else {
-        throw Exception('Failed to load summary');
-      }
-    } catch (e) {
+  try {
+    final response = await http.get(
+      Uri.parse('https://mg-vts-backend.onrender.com/api/vehicle/driver-history'),
+      headers: {
+        'Authorization': 'Bearer ${widget.token}',
+      },
+    );
+
+    print('📡 Response status code: ${response.statusCode}');
+    print('📡 Response body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      final responseData = json.decode(response.body);
+      print('✅ Decoded response: $responseData');
+
       setState(() {
-        summary = [];
+        summary = responseData['data'] ?? [];
         isLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+
+      print('📊 Summary updated with ${summary.length} entries');
+    } else {
+      throw Exception('Failed to load summary: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('❌ Error occurred: $e');
+
+    setState(() {
+      summary = [];
+      isLoading = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
         content: Text('Error: ${e.toString()}'),
         backgroundColor: Colors.red,
-      ));
-    }
+      ),
+    );
   }
+
+  print('🏁 fetchSummary finished.');
+}
+
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Driver History')),
+      appBar: AppBar(
+        title: const Text('Driver History'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: fetchSummary,
+            tooltip: 'Refresh',
+          ),
+        ],
+      ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : summary.isEmpty
@@ -353,18 +406,51 @@ class _DriverPickupDropSummaryState extends State<DriverPickupDropSummary> {
                     return Card(
                       margin: const EdgeInsets.all(10),
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(16),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(item['vehicleNumber'] ?? 'Unknown',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
+                            Text(
+                              item['vehicleNumber'] ?? 'Unknown',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             const Divider(),
-                            Text('Pickup Time: ${item['pickupTime'] ?? 'N/A'}'),
-                            Text('Pickup KM: ${item['pickupKM'] ?? 'N/A'}'),
-                            const SizedBox(height: 10),
-                            Text('Drop Time: ${item['dropTime'] ?? 'N/A'}'),
+                            
+                            // Pickup Information
+                            if (item['pickup'] != null) ...[
+                              const Text(
+                                'Pickup Details',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              Text('Time: ${item['pickup']['time'] ?? 'N/A'}'),
+                              Text('KM: ${item['pickup']['km'] ?? 'N/A'}'),
+                              if (item['pickup']['driver'] != null)
+                                Text('Driver: ${item['pickup']['driver']['name'] ?? 'Unknown'}'),
+                              const SizedBox(height: 10),
+                            ],
+                            
+                            // Drop Information
+                            if (item['drop'] != null) ...[
+                              const Text(
+                                'Drop Details',
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              Text('Time: ${item['drop']['time'] ?? 'N/A'}'),
+                              Text('KM: ${item['drop']['km'] ?? 'N/A'}'),
+                              if (item['drop']['driver'] != null)
+                                Text('Driver: ${item['drop']['driver']['name'] ?? 'Unknown'}'),
+                              const SizedBox(height: 10),
+                            ],
+                            
+                            // Total KM Calculation
+                            if (item['pickup']?['km'] != null && item['drop']?['km'] != null)
+                              Text(
+                                'Total KM: ${(item['drop']['km'] - item['pickup']['km']).toStringAsFixed(1)}',
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
                           ],
                         ),
                       ),
