@@ -225,56 +225,56 @@ router.post('/vehicle-check', authMiddleware, async (req, res) => {
 
 
       case 'bayAllocation':
-        console.log('Handling Bay Allocation stage...');
-      
-        // Ensure userId is available (from auth middleware)
-        if (!userId) {
-          return res.status(400).json({ message: 'User authentication required' });
-        }
-      
-        const existingAllocations = vehicle.bayAllocation || [];
-        const isFirstAllocation = existingAllocations.length === 0;
-      
-        // Create new allocation with required fields
-        const newAllocation = {
-          startTime: new Date(),  // Explicitly set current time
-          performedBy: userId,    // From authenticated user
-          vehicleModel: data.vehicleModel,
-          serviceType: data.serviceType,
-          jobDescription: data.jobDescription,
-          itemDescription: data.itemDescription,
-          frtHours: data.frtHours,
-          technicians: data.technicians || [], // Default empty array
-          isFirstAllocation: isFirstAllocation
-        };
-      
-        // Validate required fields
-        if (!newAllocation.startTime || !newAllocation.performedBy) {
-          console.error('Missing required fields:', {
-            startTime: newAllocation.startTime,
-            performedBy: newAllocation.performedBy
-          });
-          return res.status(400).json({ 
-            message: 'Required fields missing for bay allocation' 
-          });
-        }
-      
-        // Update related stages
-        if (isFirstAllocation) {
-          if (vehicle.jobCardCreation && !vehicle.jobCardCreation.isCompleted) {
-            vehicle.jobCardCreation.endTime = new Date();
-            vehicle.jobCardCreation.isCompleted = true;
-          }
-        } else {
-          if (vehicle.additionalWork && !vehicle.additionalWork.isCompleted) {
-            vehicle.additionalWork.endTime = new Date();
-            vehicle.additionalWork.isCompleted = true;
-          }
-        }
-      
-        // Add to bayAllocation array
-        vehicle.bayAllocation = [...existingAllocations, newAllocation];
-        break;
+  console.log('Handling Bay Allocation stage...');
+
+  // Ensure userId is available (from auth middleware)
+  if (!userId) {
+    return res.status(400).json({ message: 'User authentication required' });
+  }
+
+  const existingAllocations = vehicle.bayAllocation || [];
+  const isFirstAllocation = existingAllocations.length === 0;
+
+  // Create new allocation with required fields (arrays for serviceTypes and items)
+  const newAllocation = {
+    startTime: new Date(),
+    performedBy: userId,
+    vehicleModel: data.vehicleModel,
+    jobDescription: data.jobDescription,
+    serviceTypes: Array.isArray(data.serviceTypes) ? data.serviceTypes : [data.serviceTypes],
+    items: Array.isArray(data.items) ? data.items : [],
+    technicians: data.technicians || [],
+    isFirstAllocation: isFirstAllocation
+  };
+
+  // Validate required fields
+  if (!newAllocation.startTime || !newAllocation.performedBy) {
+    return res.status(400).json({ message: 'Required fields missing for bay allocation' });
+  }
+  if (!newAllocation.serviceTypes.length) {
+    return res.status(400).json({ message: 'At least one service type is required.' });
+  }
+  if (!newAllocation.items.length) {
+    return res.status(400).json({ message: 'At least one item is required.' });
+  }
+
+  // Update related stages
+  if (isFirstAllocation) {
+    if (vehicle.jobCardCreation && !vehicle.jobCardCreation.isCompleted) {
+      vehicle.jobCardCreation.endTime = new Date();
+      vehicle.jobCardCreation.isCompleted = true;
+    }
+  } else {
+    if (vehicle.additionalWork && !vehicle.additionalWork.isCompleted) {
+      vehicle.additionalWork.endTime = new Date();
+      vehicle.additionalWork.isCompleted = true;
+    }
+  }
+
+  // Add to bayAllocation array
+  vehicle.bayAllocation = [...existingAllocations, newAllocation];
+  break;
+
       
       
 

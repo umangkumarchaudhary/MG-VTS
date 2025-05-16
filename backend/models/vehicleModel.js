@@ -66,18 +66,19 @@ const vehicleSchema = new Schema({
 
   // 5. Bay Allocation (Start Only)
   bayAllocation: [{
-    startTime: { type: Date, required: true },
-    performedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  
-    vehicleModel: { type: String },        // Optional
-    serviceType: { type: String },         // Optional – no enum restriction
-    jobDescription: { type: String },      // Optional
-    itemDescription: { type: String },     // Optional
-    frtHours: { type: Number },            // Optional
-  
-    technicians: [{ type: Schema.Types.ObjectId, ref: 'User' }], // Optional
-    isFirstAllocation: { type: Boolean, default: false }
-  }],
+  startTime: Date,
+  performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  vehicleModel: String,
+  jobDescription: String,
+  serviceTypes: [String], // <-- Array of service types
+  items: [{
+    itemDescription: String,
+    frtHours: Number
+  }],                    // <-- Array of items with FRTs
+  technicians: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  isFirstAllocation: Boolean
+}],
+
   
 
   // 6. Road Test
