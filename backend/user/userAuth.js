@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema({
     phone: { type: String, required: true, unique: true },
     email: { type: String, default: null },
     role: { type: String, enum: allowedRoles, required: true },
-    team: { type: String, enum: ['A', 'B','None'], default: 'Default' },
+    team: { type: String, enum: ['A', 'B','None'], default: 'None' },
     password: { type: String, required: true },
 }, {
     timestamps: true
